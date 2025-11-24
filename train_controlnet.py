@@ -265,6 +265,12 @@ def parse_args(input_args=None):
         " If not specified controlnet weights are initialized from unet.",
     )
     parser.add_argument(
+        "--conditioning_channels",
+        type=int,
+        default=3,
+        help="Number of channels in the conditioning image. Default is 3 for RGB images. ",
+    )
+    parser.add_argument(
         "--revision",
         type=str,
         default=None,
@@ -561,6 +567,15 @@ def parse_args(input_args=None):
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
         ),
     )
+    parser.add_argument(
+        "--use_fixed_timestep",
+        action="store_true",
+        help=(
+            "Use a fixed timestep for training (useful for SD-Turbo and other distilled models). "
+            "When enabled, uses the maximum timestep (num_train_timesteps - 1) from the scheduler. "
+            "This enables one-step generation similar to SD-Turbo training."
+        ),
+    )
 
     if input_args is not None:
         args = parser.parse_args(input_args)
@@ -697,7 +712,18 @@ def make_train_dataset(args, tokenizer, accelerator):
         images = [image.convert("RGB") for image in examples[image_column]]
         images = [image_transforms(image) for image in images]
 
-        conditioning_images = [image.convert("RGB") for image in examples[conditioning_image_column]]
+        # Handle conditioning images - they might be paths (strings) or PIL Images
+        conditioning_images = []
+        for cond_img in examples[conditioning_image_column]:
+            if isinstance(cond_img, str):
+                # It's a path string, need to load the image
+                # Path is relative to train_data_dir
+                cond_img_path = Path(args.train_data_dir) / cond_img
+                cond_img = Image.open(cond_img_path).convert("RGB")
+            else: # Already a PIL Image
+                cond_img = cond_img.convert("RGB")
+            conditioning_images.append(cond_img)
+        
         conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
 
         examples["pixel_values"] = images
@@ -812,7 +838,7 @@ def main(args):
         controlnet = ControlNetModel.from_pretrained(args.controlnet_model_name_or_path)
     else:
         logger.info("Initializing controlnet weights from unet")
-        controlnet = ControlNetModel.from_unet(unet)
+        controlnet = ControlNetModel.from_unet(unet, conditioning_channels=args.conditioning_channels)
 
     # Taken from [Sayak Paul's Diffusers PR #6511](https://github.com/huggingface/diffusers/pull/6511/files)
     def unwrap_model(model):
@@ -1001,6 +1027,11 @@ def main(args):
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    if args.use_fixed_timestep:
+        fixed_timestep = noise_scheduler.config.num_train_timesteps - 1
+        logger.info(f"  Using FIXED timestep training (SD-Turbo style): timestep = {fixed_timestep} (num_train_timesteps = {noise_scheduler.config.num_train_timesteps})")
+    else:
+        logger.info(f"  Using RANDOM timestep training: range [0, {noise_scheduler.config.num_train_timesteps})")
     global_step = 0
     first_epoch = 0
 
@@ -1051,8 +1082,13 @@ def main(args):
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
                 # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
-                timesteps = timesteps.long()
+                # For SD-Turbo and other distilled models, use fixed timestep (typically 999 for 1000-step scheduler)
+                if args.use_fixed_timestep:
+                    # Use the maximum timestep (num_train_timesteps - 1) to match SD-Turbo training
+                    timesteps = torch.full((bsz,), noise_scheduler.config.num_train_timesteps - 1, device=latents.device)
+                else:
+                    timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
+                    timesteps = timesteps.long()
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
