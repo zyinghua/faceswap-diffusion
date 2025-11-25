@@ -114,8 +114,8 @@ def check_dataset(train_data_dir, image_column=None, caption_column=None, condit
         # Try to load it
         cond_img_path = Path(train_data_dir) / cond_img
         if cond_img_path.exists():
-            loaded_cond_img = Image.open(cond_img_path)
-            print(f"   Loaded image - Mode: {loaded_cond_img.mode}, Size: {loaded_cond_img.size}")
+            loaded_cond_img = Image.open(cond_img_path).convert("RGB")
+            print(f"   Loaded image - Mode: {loaded_cond_img.mode}, Size: {loaded_cond_img.size}, Type: {type(loaded_cond_img)}")
         else:
             print(f"   WARNING: Path does not exist: {cond_img_path}")
     else:
@@ -165,12 +165,7 @@ def main():
     
     args = parser.parse_args()
     
-    check_dataset(
-        args.train_data_dir,
-        args.image_column,
-        args.caption_column,
-        args.conditioning_image_column
-    )
+    check_dataset(args.train_data_dir)
 
 
 if __name__ == "__main__":
