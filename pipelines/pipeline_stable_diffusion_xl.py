@@ -33,7 +33,7 @@ from diffusers.loaders import (
     TextualInversionLoaderMixin,
 )
 from diffusers.models import ImageProjection
-from models.autoencoder_kl import AutoencoderKL
+from diffusers import AutoencoderKL
 from models.unet_2d_condition import UNet2DConditionModel
 from diffusers.models.attention_processor import (
     AttnProcessor2_0,

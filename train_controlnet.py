@@ -43,7 +43,7 @@ from transformers import AutoTokenizer, PretrainedConfig
 
 import diffusers
 from models.controlnet import ControlNetModel
-from models.autoencoder_kl import AutoencoderKL
+from diffusers import AutoencoderKL
 from models.unet_2d_condition import UNet2DConditionModel
 from pipelines.pipeline_controlnet import StableDiffusionControlNetPipeline
 from diffusers import DDPMScheduler
@@ -59,7 +59,7 @@ if is_wandb_available():
     import wandb
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.36.0.dev0")
+check_min_version("0.35.2")
 
 logger = get_logger(__name__)
 

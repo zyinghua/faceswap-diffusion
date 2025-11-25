@@ -44,7 +44,7 @@ from transformers import AutoTokenizer, PretrainedConfig, CLIPImageProcessor, CL
 
 import diffusers
 from models.controlnet import ControlNetModel
-from models.autoencoder_kl import AutoencoderKL
+from diffusers import AutoencoderKL
 from models.unet_2d_condition import UNet2DConditionModel
 from pipelines.pipeline_controlnet import StableDiffusionControlNetPipeline
 from diffusers import DDPMScheduler
