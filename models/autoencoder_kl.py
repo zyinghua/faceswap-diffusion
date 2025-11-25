@@ -16,12 +16,12 @@ from typing import Dict, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from ...configuration_utils import ConfigMixin, register_to_config
-from ...loaders import PeftAdapterMixin
-from ...loaders.single_file_model import FromOriginalModelMixin
-from ...utils import deprecate
-from ...utils.accelerate_utils import apply_forward_hook
-from ..attention_processor import (
+from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.loaders import PeftAdapterMixin
+from diffusers.loaders.single_file_model import FromOriginalModelMixin
+from diffusers.utils import deprecate
+from diffusers.utils.accelerate_utils import apply_forward_hook
+from diffusers.models.attention_processor import (
     ADDED_KV_ATTENTION_PROCESSORS,
     CROSS_ATTENTION_PROCESSORS,
     Attention,
@@ -30,9 +30,9 @@ from ..attention_processor import (
     AttnProcessor,
     FusedAttnProcessor2_0,
 )
-from ..modeling_outputs import AutoencoderKLOutput
-from ..modeling_utils import ModelMixin
-from .vae import AutoencoderMixin, Decoder, DecoderOutput, DiagonalGaussianDistribution, Encoder
+from diffusers.models.modeling_outputs import AutoencoderKLOutput
+from diffusers.models.modeling_utils import ModelMixin
+from diffusers.models.autoencoders.vae import AutoencoderMixin, Decoder, DecoderOutput, DiagonalGaussianDistribution, Encoder
 
 
 class AutoencoderKL(ModelMixin, AutoencoderMixin, ConfigMixin, FromOriginalModelMixin, PeftAdapterMixin):

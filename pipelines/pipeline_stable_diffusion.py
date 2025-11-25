@@ -22,7 +22,9 @@ from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
 from diffusers.configuration_utils import FrozenDict
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin, IPAdapterMixin, StableDiffusionLoraLoaderMixin, TextualInversionLoaderMixin
-from diffusers.models import AutoencoderKL, ImageProjection, UNet2DConditionModel
+from diffusers.models import ImageProjection
+from models.autoencoder_kl import AutoencoderKL
+from models.unet_2d_condition import UNet2DConditionModel
 from diffusers.models.lora import adjust_lora_scale_text_encoder
 from diffusers.schedulers import KarrasDiffusionSchedulers
 from diffusers.utils import (
