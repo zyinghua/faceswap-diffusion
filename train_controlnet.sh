@@ -16,3 +16,4 @@ accelerate launch train_controlnet.py \
     --validation_prompt "high-quality professional photo of a face" "high-quality professional photo of a face" "high-quality professional photo of a face" \
     --validation_image "ffhq-dataset512-canny/canny/Part2/17090.png" "ffhq-dataset512-canny/canny/Part7/65173.png" "ffhq-dataset512-canny/canny/Part5/41191.png" \
     --num_validation_images 1 \
+    --use_fixed_timestep \
