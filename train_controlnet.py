@@ -42,14 +42,12 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig
 
 import diffusers
-from diffusers import (
-    AutoencoderKL,
-    ControlNetModel,
-    DDPMScheduler,
-    StableDiffusionControlNetPipeline,
-    UNet2DConditionModel,
-    UniPCMultistepScheduler,
-)
+from models.controlnet import ControlNetModel
+from models.autoencoder_kl import AutoencoderKL
+from models.unet_2d_condition import UNet2DConditionModel
+from schedulers.scheduling_ddpm import DDPMScheduler
+from schedulers.scheduling_unipc_multistep import UniPCMultistepScheduler
+from pipelines.pipeline_controlnet import StableDiffusionControlNetPipeline
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
