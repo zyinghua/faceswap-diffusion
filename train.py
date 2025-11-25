@@ -17,6 +17,7 @@
 import argparse
 import contextlib
 import gc
+import itertools
 import logging
 import math
 import os
@@ -39,21 +40,28 @@ from packaging import version
 from PIL import Image
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, PretrainedConfig
+from transformers import AutoTokenizer, PretrainedConfig, CLIPImageProcessor, CLIPVisionModelWithProjection
 
 import diffusers
 from models.controlnet import ControlNetModel
 from models.autoencoder_kl import AutoencoderKL
 from models.unet_2d_condition import UNet2DConditionModel
-from schedulers.scheduling_ddpm import DDPMScheduler
-from schedulers.scheduling_unipc_multistep import UniPCMultistepScheduler
 from pipelines.pipeline_controlnet import StableDiffusionControlNetPipeline
+from diffusers import DDPMScheduler
+from diffusers import UniPCMultistepScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 
+from ip_adapter.ip_adapter import ImageProjModel
+from ip_adapter.utils import is_torch2_available
+if is_torch2_available():
+    from ip_adapter.attention_processor import AttnProcessor2_0 as AttnProcessor
+    from ip_adapter.attention_processor import IPAttnProcessor2_0 as IPAttnProcessor
+else:
+    from ip_adapter.attention_processor import AttnProcessor, IPAttnProcessor
 
 if is_wandb_available():
     import wandb
@@ -62,6 +70,53 @@ if is_wandb_available():
 check_min_version("0.36.0.dev0")
 
 logger = get_logger(__name__)
+
+
+class IPAdapter(torch.nn.Module):
+    """IP-Adapter (matching original tutorial pattern)"""
+    
+    def __init__(self, unet, image_proj_model, adapter_modules, ckpt_path=None):
+        super().__init__()
+        self.unet = unet
+        self.image_proj_model = image_proj_model
+        self.adapter_modules = adapter_modules
+        
+        if ckpt_path is not None:
+            self.load_from_checkpoint(ckpt_path)
+    
+    def load_from_checkpoint(self, ckpt_path: str):
+        # Calculate original checksums
+        orig_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
+        orig_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
+
+        state_dict = torch.load(ckpt_path, map_location="cpu")
+
+        # Load state dict for image_proj_model and adapter_modules
+        self.image_proj_model.load_state_dict(state_dict["image_proj"], strict=True)
+        self.adapter_modules.load_state_dict(state_dict["ip_adapter"], strict=True)
+
+        # Calculate new checksums
+        new_ip_proj_sum = torch.sum(torch.stack([torch.sum(p) for p in self.image_proj_model.parameters()]))
+        new_adapter_sum = torch.sum(torch.stack([torch.sum(p) for p in self.adapter_modules.parameters()]))
+
+        # Verify if the weights have changed
+        assert orig_ip_proj_sum != new_ip_proj_sum, "Weights of image_proj_model did not change!"
+        assert orig_adapter_sum != new_adapter_sum, "Weights of adapter_modules did not change!"
+        
+        logger.info(f"Successfully loaded pretrained IP-Adapter weights from checkpoint {ckpt_path}")
+    
+    def save_to_file(self, output_path: str):
+        """Save IP-Adapter weights to file"""
+        ip_adapter_state = {
+            "image_proj": self.image_proj_model.state_dict(),
+            "ip_adapter": self.adapter_modules.state_dict(),
+        }
+        torch.save(ip_adapter_state, output_path)
+    
+    def forward(self, encoder_hidden_states, image_embeds):
+        ip_tokens = self.image_proj_model(image_embeds)
+        encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)
+        return encoder_hidden_states
 
 
 def image_grid(imgs, rows, cols):
@@ -574,6 +629,30 @@ def parse_args(input_args=None):
             "This enables one-step generation similar to SD-Turbo training."
         ),
     )
+    # IP-Adapter arguments
+    parser.add_argument(
+        "--enable_ip_adapter",
+        action="store_true",
+        help="Enable IP-Adapter training alongside ControlNet.",
+    )
+    parser.add_argument(
+        "--image_encoder_path",
+        type=str,
+        default=None,
+        help="Path to CLIP image encoder for IP-Adapter. Required if --enable_ip_adapter is set.",
+    )
+    parser.add_argument(
+        "--pretrained_ip_adapter_path",
+        type=str,
+        default=None,
+        help="Path to pretrained IP-Adapter checkpoint. If not specified, weights are initialized randomly.",
+    )
+    parser.add_argument(
+        "--ip_adapter_image_drop_rate",
+        type=float,
+        default=0.0,
+        help="Drop rate for IP-Adapter image embeddings during training (for classifier-free guidance).",
+    )
 
     if input_args is not None:
         args = parser.parse_args(input_args)
@@ -608,6 +687,10 @@ def parse_args(input_args=None):
         raise ValueError(
             "`--resolution` must be divisible by 8 for consistently sized encoded images between the VAE and the controlnet encoder."
         )
+
+    # IP-Adapter validation
+    if args.enable_ip_adapter and args.image_encoder_path is None:
+        raise ValueError("`--image_encoder_path` must be specified when `--enable_ip_adapter` is set.")
 
     return args
 
@@ -706,6 +789,11 @@ def make_train_dataset(args, tokenizer, accelerator):
         ]
     )
 
+    # CLIP image processor for IP-Adapter
+    clip_image_processor = None
+    if args.enable_ip_adapter:
+        clip_image_processor = CLIPImageProcessor()
+
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
         images = [image_transforms(image) for image in images]
@@ -728,6 +816,21 @@ def make_train_dataset(args, tokenizer, accelerator):
         examples["conditioning_pixel_values"] = conditioning_images
         examples["input_ids"] = tokenize_captions(examples)
 
+        # Process images for IP-Adapter CLIP encoder
+        if args.enable_ip_adapter:
+            clip_images = [image.convert("RGB") for image in examples[image_column]]
+            clip_images_processed = []
+            drop_image_embeds = []
+            for img in clip_images:
+                # Randomly drop image embeddings for cfg
+                drop_image_embed = 1 if random.random() < args.ip_adapter_image_drop_rate else 0
+                drop_image_embeds.append(drop_image_embed)
+                # Process image for CLIP
+                clip_img = clip_image_processor(images=img, return_tensors="pt").pixel_values
+                clip_images_processed.append(clip_img)
+            examples["clip_images"] = clip_images_processed
+            examples["drop_image_embeds"] = drop_image_embeds
+
         return examples
 
     with accelerator.main_process_first():
@@ -748,11 +851,20 @@ def collate_fn(examples):
 
     input_ids = torch.stack([example["input_ids"] for example in examples])
 
-    return {
+    result = {
         "pixel_values": pixel_values,
         "conditioning_pixel_values": conditioning_pixel_values,
         "input_ids": input_ids,
     }
+
+    # Add IP-Adapter data if available
+    if "clip_images" in examples[0]:
+        clip_images = torch.cat([example["clip_images"] for example in examples], dim=0)
+        drop_image_embeds = [example["drop_image_embeds"] for example in examples]
+        result["clip_images"] = clip_images
+        result["drop_image_embeds"] = drop_image_embeds
+
+    return result
 
 
 def main(args):
@@ -838,6 +950,55 @@ def main(args):
         logger.info("Initializing controlnet weights from unet")
         controlnet = ControlNetModel.from_unet(unet, conditioning_channels=args.conditioning_channels)
 
+    # Initialize IP-Adapter components
+    image_encoder_ip_adapter = None
+    ip_adapter = None
+    if args.enable_ip_adapter:
+        logger.info("Initializing IP-Adapter components")
+        image_encoder_ip_adapter = CLIPVisionModelWithProjection.from_pretrained(args.image_encoder_path)
+        image_encoder_ip_adapter.requires_grad_(False)
+        
+        # Initialize IP-Adapter projection model
+        image_proj_model_ip_adapter = ImageProjModel(
+            cross_attention_dim=unet.config.cross_attention_dim,
+            clip_embeddings_dim=image_encoder_ip_adapter.config.projection_dim,
+            clip_extra_context_tokens=4,
+        )
+        
+        # Initialize IP-Adapter attention processors
+        attn_procs = {}
+        unet_sd = unet.state_dict()
+        for name in unet.attn_processors.keys():
+            cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
+            if name.startswith("mid_block"):
+                hidden_size = unet.config.block_out_channels[-1]
+            elif name.startswith("up_blocks"):
+                block_id = int(name[len("up_blocks.")])
+                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
+            elif name.startswith("down_blocks"):
+                block_id = int(name[len("down_blocks.")])
+                hidden_size = unet.config.block_out_channels[block_id]
+            if cross_attention_dim is None:
+                attn_procs[name] = AttnProcessor()
+            else:
+                layer_name = name.split(".processor")[0]
+                weights = {
+                    "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
+                    "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
+                }
+                attn_procs[name] = IPAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
+                attn_procs[name].load_state_dict(weights)
+        unet.set_attn_processor(attn_procs)
+        ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
+        
+        # Create IP-Adapter wrapper class
+        ip_adapter = IPAdapter(
+            unet=unet,
+            image_proj_model=image_proj_model_ip_adapter,
+            adapter_modules=ip_adapter_modules,
+            ckpt_path=args.pretrained_ip_adapter_path
+        )
+
     # Taken from [Sayak Paul's Diffusers PR #6511](https://github.com/huggingface/diffusers/pull/6511/files)
     def unwrap_model(model):
         model = accelerator.unwrap_model(model)
@@ -850,27 +1011,47 @@ def main(args):
         def save_model_hook(models, weights, output_dir):
             if accelerator.is_main_process:
                 i = len(weights) - 1
+                ip_adapter_saved = False
 
                 while len(weights) > 0:
                     weights.pop()
                     model = models[i]
 
-                    sub_dir = "controlnet"
-                    model.save_pretrained(os.path.join(output_dir, sub_dir))
+                    if isinstance(model, ControlNetModel):
+                        sub_dir = "controlnet"
+                        model.save_pretrained(os.path.join(output_dir, sub_dir))
+                    elif args.enable_ip_adapter and not ip_adapter_saved:
+                        if isinstance(model, IPAdapter):
+                            # Save IP-Adapter components (checkpoint save) to subdirectory
+                            unwrapped_ip_adapter = unwrap_model(ip_adapter)
+                            ip_adapter_dir = os.path.join(output_dir, "ip_adapter")
+                            os.makedirs(ip_adapter_dir, exist_ok=True)
+                            ip_adapter_path = os.path.join(ip_adapter_dir, "ip_adapter.bin")
+                            unwrapped_ip_adapter.save_to_file(ip_adapter_path)
+                            logger.info(f"Saved IP-Adapter to {ip_adapter_path}")
+                            ip_adapter_saved = True
 
                     i -= 1
 
         def load_model_hook(models, input_dir):
+            ip_adapter_loaded = False
             while len(models) > 0:
                 # pop models so that they are not loaded again
                 model = models.pop()
 
-                # load diffusers style into model
-                load_model = ControlNetModel.from_pretrained(input_dir, subfolder="controlnet")
-                model.register_to_config(**load_model.config)
+                if isinstance(model, ControlNetModel):
+                    # load diffusers style into model
+                    load_model = ControlNetModel.from_pretrained(input_dir, subfolder="controlnet")
+                    model.register_to_config(**load_model.config)
 
-                model.load_state_dict(load_model.state_dict())
-                del load_model
+                    model.load_state_dict(load_model.state_dict())
+                    del load_model
+                elif args.enable_ip_adapter and not ip_adapter_loaded:
+                    ip_adapter_path = os.path.join(input_dir, "ip_adapter", "ip_adapter.bin")
+                    if os.path.exists(ip_adapter_path):
+                        unwrapped_ip_adapter = unwrap_model(ip_adapter)
+                        unwrapped_ip_adapter.load_from_checkpoint(ip_adapter_path)
+                        ip_adapter_loaded = True
 
         accelerator.register_save_state_pre_hook(save_model_hook)
         accelerator.register_load_state_pre_hook(load_model_hook)
@@ -932,7 +1113,20 @@ def main(args):
         optimizer_class = torch.optim.AdamW
 
     # Optimizer creation
-    params_to_optimize = controlnet.parameters()
+    if args.enable_ip_adapter:
+        params_to_optimize = itertools.chain(
+            controlnet.parameters(),
+            ip_adapter.image_proj_model.parameters(),
+            ip_adapter.adapter_modules.parameters()
+        )
+        # Convert to list once (optimizer accepts both list and iterator)
+        params_to_optimize = list(params_to_optimize)
+        logger.info(f"Optimizing ControlNet + IP-Adapter parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
+    else:
+        # Keep original ControlNet pattern
+        params_to_optimize = controlnet.parameters()
+        logger.info(f"Optimizing ControlNet parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
+    
     optimizer = optimizer_class(
         params_to_optimize,
         lr=args.learning_rate,
@@ -973,9 +1167,14 @@ def main(args):
     )
 
     # Prepare everything with our `accelerator`.
-    controlnet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        controlnet, optimizer, train_dataloader, lr_scheduler
-    )
+    if args.enable_ip_adapter:
+        controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+            controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler
+        )
+    else:
+        controlnet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+            controlnet, optimizer, train_dataloader, lr_scheduler
+        )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
@@ -989,6 +1188,8 @@ def main(args):
     vae.to(accelerator.device, dtype=weight_dtype)
     unet.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
+    if args.enable_ip_adapter:
+        image_encoder_ip_adapter.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -1107,6 +1308,25 @@ def main(args):
                     return_dict=False,
                 )
 
+                # ======================= IP-Adapter =========================
+                if args.enable_ip_adapter and "clip_images" in batch:
+                    with torch.no_grad():
+                        clip_images = batch["clip_images"].to(accelerator.device, dtype=weight_dtype)
+                        image_embeds = image_encoder_ip_adapter(clip_images).image_embeds
+                    
+                    # Apply drop for cfg
+                    image_embeds_processed = []
+                    for image_embed, drop_image_embed in zip(image_embeds, batch["drop_image_embeds"]):
+                        if drop_image_embed == 1:
+                            image_embeds_processed.append(torch.zeros_like(image_embed))
+                        else:
+                            image_embeds_processed.append(image_embed)
+                    image_embeds = torch.stack(image_embeds_processed)
+                    
+                    # Prepare ip adapter enabled encoder hidden states
+                    encoder_hidden_states = ip_adapter(encoder_hidden_states, image_embeds)
+                # ======================= IP-Adapter =========================
+                
                 # Predict the noise residual
                 model_pred = unet(
                     noisy_latents,
@@ -1130,7 +1350,15 @@ def main(args):
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    params_to_clip = controlnet.parameters()
+                    if args.enable_ip_adapter:
+                        # Clip gradients for both ControlNet and IP-Adapter
+                        params_to_clip = itertools.chain(
+                            controlnet.parameters(),
+                            ip_adapter.image_proj_model.parameters(),
+                            ip_adapter.adapter_modules.parameters()
+                        )
+                    else:
+                        params_to_clip = controlnet.parameters()
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
@@ -1191,7 +1419,17 @@ def main(args):
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         controlnet = unwrap_model(controlnet)
-        controlnet.save_pretrained(args.output_dir)
+        controlnet_dir = os.path.join(args.output_dir, "controlnet")
+        controlnet.save_pretrained(controlnet_dir)
+        
+        # Save IP-Adapter if enabled
+        if args.enable_ip_adapter:
+            ip_adapter_unwrapped = unwrap_model(ip_adapter)
+            ip_adapter_dir = os.path.join(args.output_dir, "ip_adapter")
+            os.makedirs(ip_adapter_dir, exist_ok=True)
+            ip_adapter_path = os.path.join(ip_adapter_dir, "ip_adapter.bin")
+            ip_adapter_unwrapped.save_to_file(ip_adapter_path)
+            logger.info(f"Saved IP-Adapter to {ip_adapter_path}")
 
         # Run a final round of validation.
         image_logs = None
