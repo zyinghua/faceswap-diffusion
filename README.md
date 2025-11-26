@@ -5,23 +5,20 @@ Please see train.py for training code
 Create a conda environment:
 
 ``` bash
-conda create -p /root/autodl-tmp/faceswap/conda-env python=3.10 -y
+conda create -n faceswap python=3.10 -y
+conda activate faceswap
 ```
 
 or
 
 ``` bash
-conda create -n faceswap python=3.10 -y
+conda create -p /path/to/conda-env python=3.10 -y
+conda activate /path/to/conda-env
 ```
 
-Followed by:
+Then, cd to the repo and install packages:
 
 ``` bash
-conda activate faceswap
-```
-
-Then, install packages:
-
-``` bash
+cd faceswap-diffusion/
 pip install -r requirements.txt
 ```
