@@ -44,11 +44,13 @@ from transformers import AutoTokenizer, PretrainedConfig, CLIPImageProcessor, CL
 
 import diffusers
 from models.controlnet import ControlNetModel
-from diffusers import AutoencoderKL
 from models.unet_2d_condition import UNet2DConditionModel
 from pipelines.pipeline_controlnet import StableDiffusionControlNetPipeline
-from diffusers import DDPMScheduler
-from diffusers import UniPCMultistepScheduler
+from diffusers import (
+    AutoencoderKL,
+    DDPMScheduler,
+    UniPCMultistepScheduler,
+    )
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
@@ -67,7 +69,7 @@ if is_wandb_available():
     import wandb
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.36.0.dev0")
+check_min_version("0.35.2")
 
 logger = get_logger(__name__)
 
@@ -698,25 +700,29 @@ def parse_args(input_args=None):
 def make_train_dataset(args, tokenizer, accelerator):
     # Get the datasets: you can either provide your own training and evaluation files (see below)
     # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
-
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    if args.dataset_name is not None:
-        # Downloading and loading a dataset from the hub.
-        dataset = load_dataset(
-            args.dataset_name,
-            args.dataset_config_name,
-            cache_dir=args.cache_dir,
-            data_dir=args.train_data_dir,
-        )
-    else:
-        if args.train_data_dir is not None:
+    
+    # to avoid file locking and cache conflicts in multi-GPU training
+    with accelerator.main_process_first():
+        if args.dataset_name is not None:
+            # Downloading and loading a dataset from the hub.
             dataset = load_dataset(
-                args.train_data_dir,
+                args.dataset_name,
+                args.dataset_config_name,
                 cache_dir=args.cache_dir,
+                data_dir=args.train_data_dir,
             )
-        # See more about loading custom images at
-        # https://huggingface.co/docs/datasets/v2.0.0/en/dataset_script
+        else:
+            if args.train_data_dir is not None:
+                dataset = load_dataset(
+                    args.train_data_dir,
+                    cache_dir=args.cache_dir,
+                    num_proc=1,  # Disable multiprocessing to avoid conflicts
+                )
+            # See more about loading custom images at
+            # https://huggingface.co/docs/datasets/v2.0.0/en/dataset_script
+
+    accelerator.wait_for_everyone()
+    logger.info(f"Process {accelerator.process_index}: All processes synchronized after dataset loading")
 
     # Preprocessing the datasets.
     # We need to tokenize inputs and targets.
