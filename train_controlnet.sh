@@ -7,7 +7,7 @@ accelerate launch train_controlnet.py \
     --output_dir "controlnet-model" \
     --num_train_epochs 10 \
     --resolution 512 \
-    --learning_rate 1e-4 \
+    --learning_rate 1e-5 \
     --train_batch_size 2 \
     --gradient_accumulation_steps 2 \
     --checkpointing_steps 1000 \
