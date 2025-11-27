@@ -1,5 +1,4 @@
-## Repo for face swapping based on ControlNet and IP-Adapter
-Please see train.py for training code
+# Repo for face swapping based on ControlNet and IP-Adapter
 
 ## Environment setup:
 Create a conda environment:
@@ -35,4 +34,10 @@ cd ffhq-dataset512
 git config lfs.concurrenttransfers 1 # download only 1 file at a time (saves RAM)
 git lfs pull # actual download
 python scripts/restore_from_parquet.py # Please change the paths accordingly in the script, or call --repo_dir, etc., params accordingly
+rm -rf .git # (Optional) You may want to remove the git copy, which breaks git, but frees up a lot of storage space
 ```
+
+## Training
+There are two training scripts:
+- `train_controlnet.py` for training solely a controlnet based on your predefined conditions. `train_controlnet.sh` provides exemplar definition of hyper-parameters.
+- `train.py` for training our face swap model.
