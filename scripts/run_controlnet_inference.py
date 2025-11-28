@@ -1,6 +1,11 @@
 # Template from diffusers: https://github.com/huggingface/diffusers/tree/main/examples/controlnet
 
-from diffusers import StableDiffusionControlNetPipeline, ControlNetModel, UniPCMultistepScheduler
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from pipelines.pipeline_controlnet import StableDiffusionControlNetPipeline
+from diffusers import ControlNetModel, UniPCMultistepScheduler
 from diffusers.utils import load_image
 import torch
 
