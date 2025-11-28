@@ -124,6 +124,11 @@ def log_validation(
         raise ValueError(
             "number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`"
         )
+    
+    if args.use_fixed_timestep:
+        num_inference_steps = 1
+    else:
+        num_inference_steps = 20
 
     image_logs = []
     inference_ctx = contextlib.nullcontext() if is_final_validation else torch.autocast("cuda")
@@ -136,7 +141,7 @@ def log_validation(
         for _ in range(args.num_validation_images):
             with inference_ctx:
                 image = pipeline(
-                    validation_prompt, validation_image, num_inference_steps=20, generator=generator
+                    validation_prompt, validation_image, num_inference_steps=num_inference_steps, generator=generator
                 ).images[0]
 
             images.append(image)
@@ -148,7 +153,7 @@ def log_validation(
     tracker_key = "test" if is_final_validation else "validation"
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
-            for log in image_logs:
+            for idx, log in enumerate(image_logs):
                 images = log["images"]
                 validation_prompt = log["validation_prompt"]
                 validation_image = log["validation_image"]
@@ -160,7 +165,8 @@ def log_validation(
 
                 formatted_images = np.stack(formatted_images)
 
-                tracker.writer.add_images(validation_prompt, formatted_images, step, dataformats="NHWC")
+                tag = f"{validation_prompt}/image_{idx}"
+                tracker.writer.add_images(tag, formatted_images, step, dataformats="NHWC")
         elif tracker.name == "wandb":
             formatted_images = []
 
