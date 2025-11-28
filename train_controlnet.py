@@ -1092,7 +1092,8 @@ def main(args):
                     timesteps = torch.full((bsz,), noise_scheduler.config.num_train_timesteps - 1, device=latents.device)
                 else:
                     timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
-                    timesteps = timesteps.long()
+                    
+                timesteps = timesteps.long()
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
