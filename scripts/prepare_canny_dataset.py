@@ -26,8 +26,8 @@ def make_canny_condition(image, canny_detector, low_threshold=100, high_threshol
     return Image.fromarray(canny_rgb)
 
 
-def process_images_recursive(input_dir, output_dir, low_threshold=100, high_threshold=200, 
-                            canny_subfolder="canny", default_caption="high-quality professional photo of a face"):
+def process_images_recursive(input_dir, output_dir, captions_json, low_threshold=100, high_threshold=200, 
+                            canny_subfolder="canny"):
     """
     Process 512x512 images and generate Canny edge versions.
     Creates metadata.jsonl in HuggingFace ImageFolder format.
@@ -41,14 +41,26 @@ def process_images_recursive(input_dir, output_dir, low_threshold=100, high_thre
     Args:
         input_dir: Directory with 512x512 images (use resize_images.py first)
         output_dir: Output directory for dataset (will contain original + canny images)
+        captions_json: Path to JSON file containing captions (dict with relative paths as keys)
         low_threshold: Canny lower threshold (default: 100)
         high_threshold: Canny upper threshold (default: 200)
         canny_subfolder: Subfolder for canny images (default: "canny")
-        default_caption: Default caption for all images
     """
     input_path = Path(input_dir)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Load captions from captions_json file
+    captions_file = Path(captions_json)
+    if not captions_file.exists():
+        raise FileNotFoundError(f"Captions file not found: {captions_json}")
+    
+    try:
+        with open(captions_file, 'r', encoding='utf-8') as f:
+            captions_dict = json.load(f)
+        print(f"Loaded {len(captions_dict)} captions from {captions_file}")
+    except Exception as e:
+        raise ValueError(f"Could not load captions file {captions_json}: {e}")
     
     extensions = {'.jpg', '.jpeg', '.png'}
     image_files = []
@@ -66,11 +78,20 @@ def process_images_recursive(input_dir, output_dir, low_threshold=100, high_thre
     metadata_entries = []
     processed_count = 0
     error_count = 0
+    missing_caption_count = 0
     
     for img_file in tqdm(image_files, desc="Processing images"):
         try:
             image = Image.open(img_file).convert("RGB")
             rel_path = img_file.relative_to(input_path)
+            rel_path_str = str(rel_path)
+            
+            # Skip images without captions
+            if rel_path_str not in captions_dict:
+                missing_caption_count += 1
+                continue
+            
+            caption = captions_dict[rel_path_str]
             
             # Copy original image to output_dir (required for ImageFolder format)
             original_output = output_path / rel_path
@@ -85,8 +106,8 @@ def process_images_recursive(input_dir, output_dir, low_threshold=100, high_thre
             
             # Create metadata entry (paths relative to output_dir)
             metadata_entries.append({
-                "file_name": str(rel_path),  # Original image (HuggingFace creates "image" column from this, always col 0)
-                "text": default_caption,  # Caption (should be col 1 for positional fallback)
+                "file_name": rel_path_str,  # Original image (HuggingFace creates "image" column from this, always col 0)
+                "text": caption,
                 "conditioning_image": str(Path(canny_subfolder) / rel_path),  # Canny image (should be col 2 for positional fallback)
             })
             
@@ -106,6 +127,8 @@ def process_images_recursive(input_dir, output_dir, low_threshold=100, high_thre
     print(f"\nProcessed {processed_count} images")
     if error_count > 0:
         print(f"Encountered {error_count} errors")
+    if missing_caption_count > 0:
+        print(f"Warning: {missing_caption_count} images skipped (no caption found in captions file)")
     print(f"Dataset saved to: {output_path}")
     print(f"  - Original images: {output_path}/")
     print(f"  - Canny images: {output_path}/{canny_subfolder}/")
@@ -130,6 +153,12 @@ def main():
         help="Output directory for dataset (will contain original images, canny images, and metadata.jsonl)"
     )
     parser.add_argument(
+        "--captions_json",
+        type=str,
+        required=True,
+        help="Path to JSON file containing captions (dict with relative paths like 'Part1/00000.png' as keys)"
+    )
+    parser.add_argument(
         "--low_threshold",
         type=int,
         default=100,
@@ -147,22 +176,16 @@ def main():
         default="canny",
         help="Subfolder name for canny images (default: 'canny')"
     )
-    parser.add_argument(
-        "--default_caption",
-        type=str,
-        default="high-quality professional photo of a face",
-        help="Default caption for all images"
-    )
     
     args = parser.parse_args()
     
     process_images_recursive(
         args.input_dir,
         args.output_dir,
+        args.captions_json,
         args.low_threshold,
         args.high_threshold,
-        args.canny_subfolder,
-        args.default_caption
+        args.canny_subfolder
     )
 
 
