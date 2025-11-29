@@ -7,9 +7,10 @@ from pipelines.pipeline_stable_diffusion_xl import StableDiffusionXLPipeline
 import torch
 
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-idx = 0
-model = ["stabilityai/sd-turbo", "stabilityai/sdxl-turbo"][idx]
-pipeline = [StableDiffusionPipeline, StableDiffusionXLPipeline][idx]
+idx = 2
+model = ["stabilityai/sd-turbo", "stabilityai/sdxl-turbo","Manojb/stable-diffusion-2-1-base"][idx]
+num_inference_steps = [4, 4, 20][idx]
+pipeline = [StableDiffusionPipeline, StableDiffusionXLPipeline, StableDiffusionPipeline][idx]
 
 pipe = pipeline.from_pretrained(
     model, 
@@ -23,7 +24,7 @@ my_prompts = [
 
 images = pipe(
     prompt=my_prompts, 
-    num_inference_steps=4, 
+    num_inference_steps=num_inference_steps, 
     guidance_scale=0.0
 ).images
 
