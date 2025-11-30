@@ -72,6 +72,7 @@ class HRNetLandmarkDetector:
 
 #     return Image.fromarray(canvas)
 
+
 def draw_landmarks(image_size, landmarks):
     """
     Draws 98-point WFLW landmarks as DOTS (circles) instead of lines.
