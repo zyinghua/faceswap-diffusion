@@ -40,8 +40,44 @@ class HRNetLandmarkDetector:
         # Return landmarks for the first/largest face
         return faces['alignment'][0].cpu().numpy()
 
+# def draw_landmarks(image_size, landmarks):
+#     H, W = image_size
+#     canvas = np.zeros((H, W, 3), dtype=np.uint8)
+    
+#     if landmarks is None:
+#         return Image.fromarray(canvas)
+
+#     pts = landmarks.astype(np.int32)
+
+#     def draw_curve(indices, color):
+#         valid_indices = [i for i in indices if i < len(pts)]
+#         if not valid_indices: return
+#         curve_pts = pts[valid_indices]
+#         cv2.polylines(canvas, [curve_pts], False, color, 2)
+
+#     # WFLW 98-point Mapping
+#     draw_curve(range(0, 33), (255, 255, 255)) # Jaw
+#     draw_curve(range(33, 42), (255, 255, 0))  # Left Brow
+#     draw_curve(range(42, 51), (255, 255, 0))  # Right Brow
+#     draw_curve(range(51, 55), (255, 0, 255))  # Nose Bridge
+#     draw_curve(range(55, 60), (255, 0, 255))  # Nose Tip
+    
+#     if 76 < len(pts):
+#         cv2.polylines(canvas, [pts[60:68]], True, (0, 255, 0), 2) # Left Eye
+#         cv2.polylines(canvas, [pts[68:76]], True, (0, 255, 0), 2) # Right Eye
+    
+#     if 97 < len(pts):
+#         cv2.polylines(canvas, [pts[76:88]], True, (0, 0, 255), 2) # Outer Mouth
+#         cv2.polylines(canvas, [pts[88:98]], True, (0, 0, 255), 2) # Inner Mouth
+
+#     return Image.fromarray(canvas)
+
 def draw_landmarks(image_size, landmarks):
+    """
+    Draws 98-point WFLW landmarks as DOTS (circles) instead of lines.
+    """
     H, W = image_size
+    # Create black canvas
     canvas = np.zeros((H, W, 3), dtype=np.uint8)
     
     if landmarks is None:
@@ -49,26 +85,35 @@ def draw_landmarks(image_size, landmarks):
 
     pts = landmarks.astype(np.int32)
 
-    def draw_curve(indices, color):
+    # Helper to draw individual points
+    def draw_points(indices, color):
+        # indices can be a range or a list
         valid_indices = [i for i in indices if i < len(pts)]
-        if not valid_indices: return
-        curve_pts = pts[valid_indices]
-        cv2.polylines(canvas, [curve_pts], False, color, 2)
+        for i in valid_indices:
+            x, y = pts[i]
+            # cv2.circle(image, center, radius, color, thickness=-1 means filled)
+            cv2.circle(canvas, (x, y), 3, color, -1)
 
-    # WFLW 98-point Mapping
-    draw_curve(range(0, 33), (255, 255, 255)) # Jaw
-    draw_curve(range(33, 42), (255, 255, 0))  # Left Brow
-    draw_curve(range(42, 51), (255, 255, 0))  # Right Brow
-    draw_curve(range(51, 55), (255, 0, 255))  # Nose Bridge
-    draw_curve(range(55, 60), (255, 0, 255))  # Nose Tip
+    # --- DRAWING LOGIC (Same semantic colors, but dots) ---
+
+    # 1. Jaw (White)
+    draw_points(range(0, 33), (255, 255, 255))
     
-    if 76 < len(pts):
-        cv2.polylines(canvas, [pts[60:68]], True, (0, 255, 0), 2) # Left Eye
-        cv2.polylines(canvas, [pts[68:76]], True, (0, 255, 0), 2) # Right Eye
+    # 2. Brows (Cyan)
+    draw_points(range(33, 42), (255, 255, 0)) # Left
+    draw_points(range(42, 51), (255, 255, 0)) # Right
     
-    if 97 < len(pts):
-        cv2.polylines(canvas, [pts[76:88]], True, (0, 0, 255), 2) # Outer Mouth
-        cv2.polylines(canvas, [pts[88:98]], True, (0, 0, 255), 2) # Inner Mouth
+    # 3. Nose (Magenta)
+    draw_points(range(51, 55), (255, 0, 255)) # Bridge
+    draw_points(range(55, 60), (255, 0, 255)) # Tip
+    
+    # 4. Eyes (Green)
+    draw_points(range(60, 68), (0, 255, 0))   # Left
+    draw_points(range(68, 76), (0, 255, 0))   # Right
+    
+    # 5. Mouth (Red)
+    draw_points(range(76, 88), (0, 0, 255))   # Outer
+    draw_points(range(88, 98), (0, 0, 255))   # Inner
 
     return Image.fromarray(canvas)
 
