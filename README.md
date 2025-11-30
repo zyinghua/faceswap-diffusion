@@ -33,6 +33,7 @@ GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/datasets/zyinghua/ffhq-da
 cd ffhq-dataset512
 git config lfs.concurrenttransfers 1 # download only 1 file at a time (saves RAM)
 git lfs pull # actual download
+cd .. #go back into the faceswap-diffusion directory
 python scripts/restore_from_parquet.py # Please change the paths accordingly in the script, or call --repo_dir, etc., params accordingly
 rm -rf .git # (Optional) You may want to remove the git copy, which breaks git, but frees up a lot of storage space
 ```
