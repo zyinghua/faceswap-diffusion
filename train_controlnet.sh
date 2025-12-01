@@ -5,10 +5,10 @@
 accelerate launch train_controlnet.py \
     --pretrained_model_name_or_path "Manojb/stable-diffusion-2-1-base" \
     --conditioning_channels 3 \
-    --train_data_dir "ffhq-dataset512-canny" \
-    --output_dir "controlnet-model" \
+    --train_data_dir "/root/autodl-tmp/ffhq-dataset512-canny" \
+    --output_dir "/root/autodl-tmp/controlnet-model" \
     --num_train_epochs 1 \
-    --max_train_steps 25000 \
+    --max_train_steps 20000 \
     --resolution 512 \
     --learning_rate 1e-5 \
     --train_batch_size 1 \
@@ -16,6 +16,6 @@ accelerate launch train_controlnet.py \
     --checkpointing_steps 5000 \
     --checkpoints_total_limit 5 \
     --validation_steps 500 \
-    --validation_prompt "high-quality professional photo of a face" "high-quality professional photo of a face" \
-    --validation_image "ffhq-dataset512-canny/canny/Part2/17090.png" "ffhq-dataset512-canny/canny/Part7/65173.png" \
+    --validation_prompt "A close-up photo of a person with light brown hair styled in loose waves, wearing a small earring, and a neutral expression." "A close-up photo of a baby with dark hair, wearing a green striped shirt, lying on a teal surface, looking directly at the camera with a calm expression." \
+    --validation_image "/root/autodl-tmp/ffhq-dataset512-canny/canny/Part1/00087.png" "/root/autodl-tmp/ffhq-dataset512-canny/canny/Part1/00000.png" \
     # --use_fixed_timestep \
