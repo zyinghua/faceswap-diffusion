@@ -179,6 +179,11 @@ def log_validation(
         raise ValueError(
             "number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`"
         )
+    
+    if args.use_fixed_timestep:
+        num_inference_steps = 1
+    else:
+        num_inference_steps = 20
 
     image_logs = []
     inference_ctx = contextlib.nullcontext() if is_final_validation else torch.autocast("cuda")
@@ -191,7 +196,7 @@ def log_validation(
         for _ in range(args.num_validation_images):
             with inference_ctx:
                 image = pipeline(
-                    validation_prompt, validation_image, num_inference_steps=20, generator=generator
+                    validation_prompt, validation_image, num_inference_steps=num_inference_steps, generator=generator
                 ).images[0]
 
             images.append(image)
@@ -1293,7 +1298,8 @@ def main(args):
                     timesteps = torch.full((bsz,), noise_scheduler.config.num_train_timesteps - 1, device=latents.device)
                 else:
                     timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
-                    timesteps = timesteps.long()
+                    
+                timesteps = timesteps.long()
 
                 # Add noise to the latents according to the noise magnitude at each timestep
                 # (this is the forward diffusion process)
