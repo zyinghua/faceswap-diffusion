@@ -21,6 +21,8 @@ OUTPUT_PATH = "./output.png"
 SEED = random.randint(0, 1000000)
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 DTYPE = torch.bfloat16
+NEGATIVE_PROMPT = "(lowres, low quality, worst quality:1.2), (text:1.2), watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured (lowres, low quality, worst quality:1.2), (text:1.2), watermark, painting, drawing, illustration, glitch,deformed, mutated, cross-eyed, ugly, disfigured"
+
 
 # Guidance parameter (default: 7.5):
 GUIDANCE_SCALE = 7.5
@@ -69,7 +71,8 @@ def main():
     # Generate image
     generator = torch.manual_seed(SEED)
     image = pipe(
-        prompt, 
+        prompt,
+        negative_prompt=NEGATIVE_PROMPT,
         num_inference_steps=NUM_INFERENCE_STEPS, 
         generator=generator, 
         image=control_image,
