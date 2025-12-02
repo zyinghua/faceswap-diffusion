@@ -77,9 +77,8 @@ logger = get_logger(__name__)
 class IPAdapter(torch.nn.Module):
     """IP-Adapter (matching original tutorial pattern)"""
     
-    def __init__(self, unet, image_proj_model, adapter_modules, ckpt_path=None):
+    def __init__(self, image_proj_model, adapter_modules, ckpt_path=None):
         super().__init__()
-        self.unet = unet
         self.image_proj_model = image_proj_model
         self.adapter_modules = adapter_modules
         
@@ -1004,7 +1003,6 @@ def main(args):
         
         # Create IP-Adapter wrapper class
         ip_adapter = IPAdapter(
-            unet=unet,
             image_proj_model=image_proj_model_ip_adapter,
             adapter_modules=ip_adapter_modules,
             ckpt_path=args.pretrained_ip_adapter_path
@@ -1071,6 +1069,8 @@ def main(args):
     unet.requires_grad_(False)
     text_encoder.requires_grad_(False)
     controlnet.train()
+    if args.enable_ip_adapter:
+        ip_adapter.train()
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -1134,7 +1134,6 @@ def main(args):
         params_to_optimize = list(params_to_optimize)
         logger.info(f"Optimizing ControlNet + IP-Adapter parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
     else:
-        # Keep original ControlNet pattern
         params_to_optimize = controlnet.parameters()
         logger.info(f"Optimizing ControlNet parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
     
