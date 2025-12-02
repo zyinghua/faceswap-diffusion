@@ -38,11 +38,15 @@ def caption_face_images_batch(pil_images: list[Image.Image]) -> list[str]:
                     "type": "text",
                     "text": (
                         "You are an expert face captioner. "
-                        "Describe the face clearly and objectively, "
-                        "including approximate age, perceived gender presentation, "
-                        "hair style and color, expression, and any notable attributes. "
-                        "Start the caption with 'A close-up photo of...' "
-                        "Use one concise sentence and avoid names and guessing identity."
+                        "Describe the image using a short, natural phrase. "
+                        "Focus primarily on the subject's general identity (e.g., man, woman, baby, girl) "
+                        "and their hair style, clothing, accessories, or the background environment. "
+                        "Keep the caption brief, typically 5-10 words."
+                        "\n\nExamples:"
+                        "\n- 'a woman with long dark hair'"
+                        "\n- 'a man in a suit and tie'"
+                        "\n- 'a baby wearing a knitted bonnet'"
+                        "\n- 'a young girl singing into a microphone'"
                     ),
                 }
             ],
@@ -54,13 +58,12 @@ def caption_face_images_batch(pil_images: list[Image.Image]) -> list[str]:
                 {
                     "type": "text",
                     "text": (
-                        "Describe this face in one sentence for a training caption."
+                        "Describe this face in one brief sentence for a training caption."
                     ),
                 },
             ],
         },
     ]
-
     # 1. Build chat prompt for each image
     text = processor.apply_chat_template(
         messages,
