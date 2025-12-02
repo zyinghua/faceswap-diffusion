@@ -21,7 +21,7 @@ OUTPUT_PATH = "./output.png"
 SEED = random.randint(0, 1000000)
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 DTYPE = torch.bfloat16
-NEGATIVE_PROMPT = "(lowres, low quality, worst quality:1.2), (text:1.2), watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured (lowres, low quality, worst quality:1.2), (text:1.2), watermark, painting, drawing, illustration, glitch,deformed, mutated, cross-eyed, ugly, disfigured"
+NEGATIVE_PROMPT = "noisy, blurry, low contrast, realism, photorealistic, vibrant, colorful, watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured"
 
 
 # Guidance parameter (default: 7.5):
