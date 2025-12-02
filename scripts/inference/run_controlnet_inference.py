@@ -4,9 +4,7 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from pipelines.pipeline_controlnet import StableDiffusionControlNetPipeline
-from models.controlnet import ControlNetModel
-from diffusers import UniPCMultistepScheduler
+from diffusers import StableDiffusionControlNetPipeline, ControlNetModel, UniPCMultistepScheduler
 from diffusers.utils import load_image
 import torch
 import random

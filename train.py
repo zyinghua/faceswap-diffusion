@@ -43,14 +43,14 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer, PretrainedConfig, CLIPImageProcessor, CLIPVisionModelWithProjection
 
 import diffusers
-from models.controlnet import ControlNetModel
-from models.unet_2d_condition import UNet2DConditionModel
-from pipelines.pipeline_controlnet import StableDiffusionControlNetPipeline
 from diffusers import (
     AutoencoderKL,
+    ControlNetModel,
     DDPMScheduler,
+    StableDiffusionControlNetPipeline,
+    UNet2DConditionModel,
     UniPCMultistepScheduler,
-    )
+)
 from diffusers.optimization import get_scheduler
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
