@@ -9,14 +9,16 @@ from models.controlnet import ControlNetModel
 from diffusers import UniPCMultistepScheduler
 from diffusers.utils import load_image
 import torch
+import random
+import json
 
 BASE_MODEL = "Manojb/stable-diffusion-2-1-base"
 CONTROLNET_PATH = "" # pretrained controlnet path, ends with /controlnet
-PROMPT = "A close-up photo of a person with light brown hair styled in loose waves, wearing a small earring, and a neutral expression."
+PROMPT_JSONL_PATH = ""  # Path to JSONL file containing prompts (each line should have "text")
 CONTROL_IMAGE = "" # canny image
 NUM_INFERENCE_STEPS = 20
 OUTPUT_PATH = "./output.png"
-SEED = 42
+SEED = random.randint(0, 1000000)
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 DTYPE = torch.bfloat16
 
@@ -28,7 +30,26 @@ CONTROLNET_CONDITIONING_SCALE = 1.0
 
 
 def main():
+    control_image_filename = CONTROL_IMAGE.split("/")[-1]
+    
+    prompt = None
+    if PROMPT_JSONL_PATH:
+        with open(PROMPT_JSONL_PATH, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                entry = json.loads(line)
+                file_name = entry.get('file_name', '')
+                if file_name.endswith(control_image_filename):
+                    prompt = entry.get('text')
+                    break
+    
+    if not prompt:
+        raise ValueError(f"Could not find prompt for {control_image_filename} in {PROMPT_JSONL_PATH}")
+    
     print(f"Loading ControlNet from: {CONTROLNET_PATH}")
+    print(f"Prompt: {prompt}")
     
     controlnet = ControlNetModel.from_pretrained(CONTROLNET_PATH, torch_dtype=DTYPE)
     pipe = StableDiffusionControlNetPipeline.from_pretrained(
@@ -48,7 +69,7 @@ def main():
     # Generate image
     generator = torch.manual_seed(SEED)
     image = pipe(
-        PROMPT, 
+        prompt, 
         num_inference_steps=NUM_INFERENCE_STEPS, 
         generator=generator, 
         image=control_image,
