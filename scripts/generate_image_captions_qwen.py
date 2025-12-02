@@ -20,50 +20,94 @@ model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
 )
 processor = AutoProcessor.from_pretrained(model_name,cache_dir=cache_dir)
 
-def caption_face_images_batch(pil_images: list[Image.Image]) -> list[str]:
+def caption_face_images_batch(pil_images: list[Image.Image], style: str = "medium") -> list[str]:
     """
     Generate captions for a batch of face images using Qwen2.5-VL-7B-Instruct.
     
     Args:
         pil_images: List of PIL Images to caption
+        style: Caption style - "medium" (5-10 words) or "short" (minimalist)
         
     Returns:
         List of caption strings, one per image
     """
-    messages = [
-        {
-            "role": "system",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        "You are an expert face captioner. "
-                        "Describe the image using a short, natural phrase. "
-                        "Focus primarily on the subject's general identity (e.g., man, woman, baby, girl) "
-                        "and their hair style, clothing, accessories, or the background environment. "
-                        "Keep the caption brief, typically 5-10 words."
-                        "\n\nExamples:"
-                        "\n- 'a woman with long dark hair'"
-                        "\n- 'a man in a suit and tie'"
-                        "\n- 'a baby wearing a knitted bonnet'"
-                        "\n- 'a young girl singing into a microphone'"
-                    ),
-                }
-            ],
-        },
-        {
-            "role": "user",
-            "content": [
-                {"type": "image"},
-                {
-                    "type": "text",
-                    "text": (
-                        "Describe this face in one brief sentence for a training caption."
-                    ),
-                },
-            ],
-        },
-    ]
+    messages_templates = {
+        "medium": [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "You are an expert face captioner. "
+                            "Describe the image using a short, natural phrase. "
+                            "Focus primarily on the subject's general identity (e.g., man, woman, baby, girl) "
+                            "and their hair style, clothing, accessories, or the background environment. "
+                            "Keep the caption brief, typically 5-10 words."
+                            "\n\nExamples:"
+                            "\n- 'a woman with long dark hair'"
+                            "\n- 'a man in a suit and tie'"
+                            "\n- 'a baby wearing a knitted bonnet'"
+                            "\n- 'a young girl singing into a microphone'"
+                        ),
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe this face in one brief sentence for a training caption."
+                        ),
+                    },
+                ],
+            },
+        ],
+        "short": [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "You are a minimalist face captioner. "
+                            "Your goal is to describe the subject using the fewest words possible. "
+                            "Follow this format generally: '<Identity> [wearing/with] <Most Significant Attribute>'. "
+                            "Or '<Identity> <action> <Attribute>', where use a word to describe the action."
+                            "\n\nRules:"
+                            "\n1. Identity must be generic: use only 'man', 'woman', 'boy', 'girl', 'baby', or 'person'."
+                            "\n2. Attribute must be a major clothing item or accessory (e.g., 'wearing a suit', 'with glasses', 'wearing a red shirt')."
+                            "\n3. Output nothing else. No full sentences."
+                            "\n\nExample outputs:"
+                            "\n- 'a woman with blonde hair'"
+                            "\n- 'a man in a suit with a tie'"
+                            "\n- 'a girl wearing a hat'"
+                            "\n- 'a woman singing into a microphone'"
+                        ),
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {
+                        "type": "text",
+                        "text": (
+                            "Provide the minimalist caption."
+                        ),
+                    },
+                ],
+            },
+        ],
+    }
+    
+    # Select the message template based on style
+    messages = messages_templates.get(style, messages_templates["medium"])
+    
     # 1. Build chat prompt for each image
     text = processor.apply_chat_template(
         messages,
@@ -97,7 +141,7 @@ def caption_face_images_batch(pil_images: list[Image.Image]) -> list[str]:
     return [caption.strip() for caption in captions]
 
 
-def process_images_recursive(input_dir, output_json, batch_size=4):
+def process_images_recursive(input_dir, output_json, batch_size=4, style="medium"):
     """
     Generate captions in batches, and save to JSON with image filename as key.
     
@@ -118,6 +162,7 @@ def process_images_recursive(input_dir, output_json, batch_size=4):
     
     print(f"Found {len(image_files)} images to process")
     print(f"Using batch size: {batch_size}")
+    print(f"Using caption style: {style}")
     
     if len(image_files) == 0:
         print(f"No images found in {input_dir}")
@@ -154,7 +199,7 @@ def process_images_recursive(input_dir, output_json, batch_size=4):
         
         # Generate captions for the batch
         try:
-            captions = caption_face_images_batch(batch_images)
+            captions = caption_face_images_batch(batch_images, style=style)
             
             # Store captions in dictionary
             for rel_path, caption in zip(batch_paths, captions):
@@ -225,10 +270,17 @@ def main():
         default=4,
         help="Number of images to process in each batch (default: 4)"
     )
+    parser.add_argument(
+        "--style",
+        type=str,
+        default="medium",
+        choices=["medium", "short"],
+        help="Caption style"
+    )
     
     args = parser.parse_args()
     
-    process_images_recursive(args.input_dir, args.output_json, args.batch_size)
+    process_images_recursive(args.input_dir, args.output_json, args.batch_size, args.style)
 
 
 if __name__ == "__main__":
