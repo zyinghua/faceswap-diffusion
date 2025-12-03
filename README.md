@@ -40,5 +40,6 @@ rm -rf .git # (Optional) You may want to remove the git copy, which breaks git, 
 
 ## Training
 There are two training scripts:
-- `train_controlnet.py` for training solely a controlnet based on your predefined conditions. `train_controlnet.sh` provides exemplar definition of hyper-parameters.
+- `train_controlnet.py` for training solely a ControlNet based on your predefined conditions. `train_controlnet.sh` provides exemplar definition of hyper-parameters.
+- `train_controlnet_ip-adapter.py` for training ControlNet + IP-Adapter, similar style as InstantID.
 - `train.py` for training our face swap model.
