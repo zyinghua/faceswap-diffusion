@@ -1,7 +1,9 @@
 
 """
-Script for extracting the IP-Adapter Frozen Encoder's embeddings 
+Script for extracting AntelopeV2's face embeddings (with detection)
 for a face image directory and save them as pt files.
+
+For the use of IP-Adapter.
 """
 
 import cv2
