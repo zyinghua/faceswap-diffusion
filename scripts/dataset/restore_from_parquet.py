@@ -11,9 +11,9 @@ from datasets import load_dataset_builder
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo_dir", default="/root/autodl-tmp/ffhq-dataset512", help="Path to the git cloned folder")
-    parser.add_argument("--out_dir", default="/root/autodl-tmp/ffhq-dataset512-restored", help="Output folder for images")
-    parser.add_argument("--repo_id", default="zyinghua/ffhq-dataset512", help="HF Repo ID to fetch label names")
+    parser.add_argument("--repo_dir", default="/root/autodl-tmp/ff-celeba-hq-dataset512", help="Path to the git cloned folder")
+    parser.add_argument("--out_dir", default="/root/autodl-tmp/ff-celeba-hq-dataset512-restored", help="Output folder for images")
+    parser.add_argument("--repo_id", default="zyinghua/ff-celeba-hq-dataset512", help="HF Repo ID to fetch label names")
     args = parser.parse_args()
 
     print(f"Fetching label mapping from {args.repo_id}...")

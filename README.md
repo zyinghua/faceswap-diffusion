@@ -23,13 +23,13 @@ pip install -r requirements.txt
 ```
 
 ## Download Dataset
-Currently, the dataset has been uploaded to [huggingface](https://huggingface.co/datasets/zyinghua/ffhq-dataset512) stored as parquet files.
+Currently, the dataset has been uploaded to [huggingface](https://huggingface.co/datasets/zyinghua/ff-celeba-hq-dataset512) stored as parquet files.
 If your compute has enough bandwidth, you may first try: `scripts/download_and_restore_dataset.py`, which downloads and restore images directly.
 
 **A safer option:**
 ```bash
 git lfs install
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/datasets/zyinghua/ffhq-dataset512 # pesudo clone
+GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/datasets/zyinghua/ff-celeba-hq-dataset512 # pesudo clone
 cd ffhq-dataset512
 git config lfs.concurrenttransfers 1 # download only 1 file at a time (saves RAM)
 git lfs pull # actual download

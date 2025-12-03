@@ -2,8 +2,8 @@ import os
 from datasets import load_dataset
 from tqdm import tqdm
 
-REPO_ID = "zyinghua/ffhq-dataset512" # specify the huggingface dataset repo id here (e.g., <username>/ffhq-dataset512)
-OUTPUT_DIR = "ffhq-dataset512"
+REPO_ID = "https://huggingface.co/datasets/zyinghua/ff-celeba-hq-dataset512" # specify the huggingface dataset repo id here (e.g., <username>/ffhq-dataset512)
+OUTPUT_DIR = "ff-celeba-hq-dataset512"
 
 print("Connecting to Hugging Face...")
 dataset = load_dataset(REPO_ID, split="train", streaming=True)
