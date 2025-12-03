@@ -1,10 +1,10 @@
-import os
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, snapshot_download
 
 HF_TOKEN = ""     
 REPO_ID = "" # <username>/<repo_name>
 LOCAL_DIR = "" # path to model checkpoints dir
 REPO_TYPE = "model"
+UPLOAD = True
 
 def upload_checkpoints():
     api = HfApi(token=HF_TOKEN)
