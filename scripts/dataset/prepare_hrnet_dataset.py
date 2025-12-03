@@ -1,6 +1,9 @@
 import argparse
 import json
 import shutil
+import os
+import random
+import sys
 import numpy as np
 import cv2
 import torch
@@ -9,76 +12,42 @@ import torchvision.transforms.functional as TF
 from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
+from insightface.app import FaceAnalysis
+
+# --- IMPORT FROM SIBLING SCRIPT ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+
+try:
+    from ip_adapter_frozen_encoding_extraction import process_single_image
+except ImportError:
+    print("Error: Could not import 'ip_adapter_frozen_encoding_extraction.py'.")
+    print("Make sure both scripts are in the same directory.")
+    sys.exit(1)
 
 class HRNetLandmarkDetector:
     def __init__(self, device='cuda'):
         self.device = device
-        print(f"Loading Face Detector (RetinaFace) and Landmark Detector (HRNet) on {device}...")
-        
+        print(f"Loading HRNet Landmark Detector on {device}...")
         self.face_detector = facer.face_detector('retinaface/mobilenet', device=self.device)
         self.landmark_detector = facer.face_aligner('farl/wflw/448', device=self.device)
 
     def __call__(self, image):
-        """
-        Input: PIL Image
-        Output: Tensor of shape [N, 98, 2] (landmarks) or None if no face found
-        """
-        # FIX: Use torchvision instead of facer.util
         # Facer expects [B, C, H, W] tensor with values 0-255
         img_tensor = TF.to_tensor(image).to(self.device).unsqueeze(0) * 255.0
         
-        # Detect Faces
         with torch.inference_mode():
             faces = self.face_detector(img_tensor)
-            
             if 'image_ids' not in faces or len(faces['image_ids']) == 0:
                 return None
-            
-            # Detect Landmarks using HRNet
             faces = self.landmark_detector(img_tensor, faces)
             
-        # Return landmarks for the first/largest face
         return faces['alignment'][0].cpu().numpy()
 
-# def draw_landmarks(image_size, landmarks):
-#     H, W = image_size
-#     canvas = np.zeros((H, W, 3), dtype=np.uint8)
-    
-#     if landmarks is None:
-#         return Image.fromarray(canvas)
-
-#     pts = landmarks.astype(np.int32)
-
-#     def draw_curve(indices, color):
-#         valid_indices = [i for i in indices if i < len(pts)]
-#         if not valid_indices: return
-#         curve_pts = pts[valid_indices]
-#         cv2.polylines(canvas, [curve_pts], False, color, 2)
-
-#     # WFLW 98-point Mapping
-#     draw_curve(range(0, 33), (255, 255, 255)) # Jaw
-#     draw_curve(range(33, 42), (255, 255, 0))  # Left Brow
-#     draw_curve(range(42, 51), (255, 255, 0))  # Right Brow
-#     draw_curve(range(51, 55), (255, 0, 255))  # Nose Bridge
-#     draw_curve(range(55, 60), (255, 0, 255))  # Nose Tip
-    
-#     if 76 < len(pts):
-#         cv2.polylines(canvas, [pts[60:68]], True, (0, 255, 0), 2) # Left Eye
-#         cv2.polylines(canvas, [pts[68:76]], True, (0, 255, 0), 2) # Right Eye
-    
-#     if 97 < len(pts):
-#         cv2.polylines(canvas, [pts[76:88]], True, (0, 0, 255), 2) # Outer Mouth
-#         cv2.polylines(canvas, [pts[88:98]], True, (0, 0, 255), 2) # Inner Mouth
-
-#     return Image.fromarray(canvas)
-
-
 def draw_landmarks(image_size, landmarks):
-    """
-    Draws 98-point WFLW landmarks as DOTS (circles) instead of lines.
-    """
+    """Draws 98-point WFLW landmarks as DOTS (circles)."""
     H, W = image_size
-    # Create black canvas
     canvas = np.zeros((H, W, 3), dtype=np.uint8)
     
     if landmarks is None:
@@ -86,45 +55,53 @@ def draw_landmarks(image_size, landmarks):
 
     pts = landmarks.astype(np.int32)
 
-    # Helper to draw individual points
     def draw_points(indices, color):
-        # indices can be a range or a list
         valid_indices = [i for i in indices if i < len(pts)]
         for i in valid_indices:
             x, y = pts[i]
-            # cv2.circle(image, center, radius, color, thickness=-1 means filled)
             cv2.circle(canvas, (x, y), 3, color, -1)
 
-    # --- DRAWING LOGIC (Same semantic colors, but dots) ---
-
-    # 1. Jaw (White)
-    draw_points(range(0, 33), (255, 255, 255))
+    # WFLW 98-point Mapping
+    draw_points(range(0, 33), (255, 255, 255)) # Jaw
+    draw_points(range(33, 42), (255, 255, 0))  # Left Brow
+    draw_points(range(42, 51), (255, 255, 0))  # Right Brow
+    draw_points(range(51, 55), (255, 0, 255))  # Nose Bridge
+    draw_points(range(55, 60), (255, 0, 255))  # Nose Tip
     
-    # 2. Brows (Cyan)
-    draw_points(range(33, 42), (255, 255, 0)) # Left
-    draw_points(range(42, 51), (255, 255, 0)) # Right
+    if 76 < len(pts):
+        draw_points(range(60, 68), (0, 255, 0))   # Left Eye
+        draw_points(range(68, 76), (0, 255, 0))   # Right Eye
     
-    # 3. Nose (Magenta)
-    draw_points(range(51, 55), (255, 0, 255)) # Bridge
-    draw_points(range(55, 60), (255, 0, 255)) # Tip
-    
-    # 4. Eyes (Green)
-    draw_points(range(60, 68), (0, 255, 0))   # Left
-    draw_points(range(68, 76), (0, 255, 0))   # Right
-    
-    # 5. Mouth (Red)
-    draw_points(range(76, 88), (0, 0, 255))   # Outer
-    draw_points(range(88, 98), (0, 0, 255))   # Inner
+    if 97 < len(pts):
+        draw_points(range(76, 88), (0, 0, 255))   # Outer Mouth
+        draw_points(range(88, 98), (0, 0, 255))   # Inner Mouth
 
     return Image.fromarray(canvas)
 
-def process_images_recursive(input_dir, output_dir, landmark_subfolder="landmarks", 
-                            default_caption="high-quality professional photo of a face", max_samples=None):
+def process_images_recursive(input_dir, output_dir, 
+                             captions_json,
+                             landmark_subfolder="landmarks", 
+                             embedding_subfolder="embeddings",
+                             default_caption="high-quality professional photo of a face", 
+                             max_samples=None,
+                             is_faceswap=False):
     
     input_path = Path(input_dir)
     output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    landmark_path = output_path / landmark_subfolder
+    embed_path = output_path / embedding_subfolder
     
+    output_path.mkdir(parents=True, exist_ok=True)
+    landmark_path.mkdir(parents=True, exist_ok=True)
+    embed_path.mkdir(parents=True, exist_ok=True)
+
+    # --- Load Captions ---
+    print(f"Loading captions from {captions_json}...")
+    with open(captions_json, 'r', encoding='utf-8') as f:
+        captions_dict = json.load(f)
+    print(f"Loaded {len(captions_dict)} captions.")
+    
+    # Gather images
     extensions = {'.jpg', '.jpeg', '.png'}
     image_files = []
     for ext in extensions:
@@ -136,52 +113,131 @@ def process_images_recursive(input_dir, output_dir, landmark_subfolder="landmark
         print(f"Running on first {max_samples} images for inspection...")
         image_files = image_files[:max_samples]
     
-    detector = HRNetLandmarkDetector()
+    # 1. Initialize Landmark Detector
+    landmark_detector = HRNetLandmarkDetector()
     
+    # 2. Initialize InsightFace
+    print("Loading InsightFace (AntelopeV2)...")
+    app = FaceAnalysis(name="antelopev2", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+    app.prepare(ctx_id=0, det_size=(640, 640))
+    
+    # 3. Build Identity Map for FaceSwap pairing
+    identity_map = {}
+    if is_faceswap:
+        for img_file in image_files:
+            parent = str(img_file.parent)
+            if parent not in identity_map:
+                identity_map[parent] = []
+            identity_map[parent].append(img_file)
+
     metadata_entries = []
     processed_count = 0
-    error_count = 0
+    missing_caption_count = 0
     
-    for img_file in tqdm(image_files, desc="Processing images"):
+    for img_file in tqdm(image_files, desc="Processing dataset"):
         try:
-            image = Image.open(img_file).convert("RGB")
             rel_path = img_file.relative_to(input_path)
+            rel_path_str = str(rel_path)
+
+            # Check for Caption (Skip if missing, like the canny script)
+            if rel_path_str not in captions_dict:
+                missing_caption_count += 1
+                continue
             
-            # 1. Copy Original
+            current_caption = captions_dict[rel_path_str]
+            
+            # Paths
             original_output = output_path / rel_path
-            original_output.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(img_file, original_output)
+            landmark_output = landmark_path / rel_path.with_suffix('.png')
+            embed_output = embed_path / rel_path.with_suffix('.pt')
             
-            # 2. Inference (HRNet)
-            landmarks = detector(image)
+            # Create subdirs
+            original_output.parent.mkdir(parents=True, exist_ok=True)
+            landmark_output.parent.mkdir(parents=True, exist_ok=True)
+            embed_output.parent.mkdir(parents=True, exist_ok=True)
+
+            # --- A. Copy Original Image ---
+            if not original_output.exists():
+                shutil.copy2(img_file, original_output)
+            
+            # --- B. Generate Landmarks (HRNet) ---
+            image = Image.open(img_file).convert("RGB")
+            landmarks = landmark_detector(image)
             
             if landmarks is None:
-                # Skip images where no face was found
-                continue
+                continue # Skip if no face for landmarks
 
-            # 3. Draw Condition Map
             landmark_image = draw_landmarks((image.height, image.width), landmarks)
-            
-            # 4. Save Condition Map
-            landmark_output = output_path / landmark_subfolder / rel_path
-            landmark_output.parent.mkdir(parents=True, exist_ok=True)
-            landmark_output = landmark_output.with_suffix('.png') 
             landmark_image.save(landmark_output)
             
-            # 5. Metadata
-            rel_cond_path = str(Path(landmark_subfolder) / rel_path.with_suffix('.png'))
+            # --- C. Generate ID Embedding (Using other script) ---
+            success, _ = process_single_image(app, img_file, embed_output)
+            if not success:
+                continue # Skip if InsightFace fails to find a face
+
+            # --- D. Metadata Generation ---
+            rel_img_str = str(rel_path)
+            rel_cond_str = str(Path(landmark_subfolder) / rel_path.with_suffix('.png'))
+            rel_embed_str = str(Path(embedding_subfolder) / rel_path.with_suffix('.pt'))
             
-            metadata_entries.append({
-                "file_name": str(rel_path),
-                "text": default_caption,
-                "conditioning_image": rel_cond_path,
-            })
-            
+            if not is_faceswap:
+                # Standard ControlNet Format
+                entry = {
+                    "file_name": rel_img_str,
+                    "text": current_caption,
+                    "conditioning_image": rel_cond_str,
+                    "faceid_embedding": rel_embed_str
+                }
+            else:
+                # FaceSwap Format
+                parent = str(img_file.parent)
+                siblings = identity_map.get(parent, [])
+                
+                # Pick Source Image
+                source_candidates = [s for s in siblings if s != img_file]
+                if len(source_candidates) > 0:
+                    source_file = random.choice(source_candidates)
+                else:
+                    # Fallback to self
+                    source_file = img_file
+                
+                # Get Source Metadata
+                source_rel_path = source_file.relative_to(input_path)
+                source_rel_path_str = str(source_rel_path)
+                
+                # Get Source Caption default_cation
+                source_caption = default_caption
+                
+                # Get Source Embedding Path
+                source_embed_output = embed_path / source_rel_path.with_suffix('.pt')
+                
+                if not source_embed_output.exists():
+                    # Generate it on demand
+                    source_embed_output.parent.mkdir(parents=True, exist_ok=True)
+                    s_success, _ = process_single_image(app, source_file, source_embed_output)
+                    if not s_success:
+                        # If source fails, fallback to target (self) which we know works
+                        source_file = img_file
+                        source_embed_output = embed_output
+                        source_caption = current_caption
+                
+                source_embed_str = str(Path(embedding_subfolder) / source_file.relative_to(input_path).with_suffix('.pt'))
+
+                # Exact Output Format
+                entry = {
+                    "file_name": rel_img_str,
+                    "text": current_caption,
+                    "conditioning_image": rel_cond_str,
+                    "faceid_embedding": rel_embed_str,
+                    "source_faceid_embedding": source_embed_str,
+                    "source_text": source_caption
+                }
+
+            metadata_entries.append(entry)
             processed_count += 1
             
         except Exception as e:
             print(f"Error processing {img_file}: {e}")
-            error_count += 1
             continue
     
     # Save metadata
@@ -190,20 +246,29 @@ def process_images_recursive(input_dir, output_dir, landmark_subfolder="landmark
         for entry in metadata_entries:
             f.write(json.dumps(entry, ensure_ascii=False) + '\n')
             
-    print(f"\nSaved {processed_count} images to {output_path}")
+    print(f"\nProcessed {processed_count} images.")
+    if missing_caption_count > 0:
+        print(f"Warning: Skipped {missing_caption_count} images due to missing captions.")
+    print(f"Saved to {output_path}")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--max_samples", type=int, default=None, help="Limit number of images for testing")
+    parser.add_argument("--captions_json", type=str, required=True, help="Path to JSON file with captions")
+    parser.add_argument("--max_samples", type=int, default=None)
+    parser.add_argument("--default_caption", type=str, default="high-quality professional photo of a face")
+    parser.add_argument("--faceswap", action="store_true", help="Enable FaceSwap tuple output format")
     
     args = parser.parse_args()
     
     process_images_recursive(
         args.input_dir,
         args.output_dir,
-        max_samples=args.max_samples
+        args.captions_json,
+        default_caption=args.default_caption,
+        max_samples=args.max_samples,
+        is_faceswap=args.faceswap
     )
 
 if __name__ == "__main__":
