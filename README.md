@@ -39,6 +39,19 @@ rm -rf .git # (Optional) You may want to remove the git copy, which breaks git, 
 ```
 
 ## Training
+You will need to set up training environment config first, please run `accelerate config`, and follow the below setup as default (change as needed based on your specific environment).
+```bash
+- This machine
+- multi-GPU
+- How many different machines will you use (use more than 1 for multi-node training)? [1]: 1
+- Should distributed operations be checked while running for errors? This can avoid timeout issues but will be slower. [yes/NO]: no
+- Do you wish to optimize your script with torch dynamo?[yes/NO]: no
+- Do you want to use FullyShardedDataParallel? [yes/NO]: no
+- Do you want to use Megatron-LM ? [yes/NO]: no
+- How many GPU(s) should be used for distributed training? [1]: <input your gpu num setting>
+- Please select a choice using the arrow or number keys, and selecting with enter: fp16
+```
+
 There are two training scripts:
 - `train_controlnet.py` for training solely a ControlNet based on your predefined conditions. `train_controlnet.sh` provides exemplar definition of hyper-parameters.
 - `train_controlnet_ip-adapter.py` for training ControlNet + IP-Adapter, similar style as InstantID.
