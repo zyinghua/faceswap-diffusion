@@ -36,6 +36,7 @@ from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 from datasets import load_dataset
 from huggingface_hub import create_repo, upload_folder
+from scripts.models.iresnet import iresnet100
 from packaging import version
 from PIL import Image
 from torchvision import transforms
@@ -672,6 +673,19 @@ def parse_args(input_args=None):
         default=128,
         help="LoRA rank for IP-Adapter FaceID attention processors. Default is 128.",
     )
+    parser.add_argument(
+        "--id_loss_weight",
+        type=float,
+        default=0.1,
+        help="Weight for identity preservation loss (L_id). Default is 0.1.",
+    )
+    parser.add_argument(
+        "--faceid_encoder_path",
+        type=str,
+        default="checkpoints/glint360k_r100.pth",
+        help="Path to faceid encoder checkpoint.",
+    )
+
 
     if input_args is not None:
         args = parser.parse_args(input_args)
@@ -929,6 +943,71 @@ def collate_fn(examples):
         result["source_input_ids"] = source_input_ids
 
     return result
+
+
+def one_step_clean_pixel_extraction(model_pred_id, noisy_latents, timesteps, noise_scheduler, vae, use_fixed_timestep):
+    """
+    Extract a one-step clean pixel estimate from the noise prediction.
+    """
+    if noise_scheduler.config.prediction_type != "epsilon":
+        raise ValueError(f"One Step Clean Extraction: Unsupported prediction type {noise_scheduler.config.prediction_type} ")
+
+    if use_fixed_timestep:
+        pred_original_sample = noise_scheduler.step(
+            model_output=model_pred_id,
+            timestep=timesteps,
+            sample=noisy_latents,
+            return_dict=False,
+        )[0]
+    else:
+        alpha_cumprod_t = noise_scheduler.alphas_cumprod[timesteps].to(
+            device=noisy_latents.device, dtype=noisy_latents.dtype
+        )
+        alpha_cumprod_t = alpha_cumprod_t.view(-1, 1, 1, 1)
+
+        pred_original_sample = (noisy_latents - ((1 - alpha_cumprod_t) ** 0.5) * model_pred_id) / (alpha_cumprod_t ** 0.5)
+
+    scaled_latents = pred_original_sample / vae.config.scaling_factor
+    
+    with torch.no_grad():
+        decoded = vae.decode(scaled_latents, return_dict=False)[0]
+    
+    pred_x0 = (decoded / 2 + 0.5).clamp(0, 1)
+    #pred_x0 = pred_x0.permute(0, 2, 3, 1)
+    
+    return pred_x0
+
+
+def extract_faceid_embedding(encoder_path, img_tensor):
+    raise NotImplementedError()
+
+
+def compute_id_loss(pred_x0, source_faceid_embeddings, encoder_path, device):
+    """
+    Compute L_id loss: identity preservation loss using cosine similarity.
+    """
+    batch_size = pred_x0.shape[0]
+    pred_faceid_embeddings = []
+    
+    for i in range(batch_size):
+        img_tensor = pred_x0[i]  # [3, H, W]
+        face_emb = extract_faceid_embedding(encoder_path, img_tensor)
+        pred_faceid_embeddings.append(face_emb)
+    
+    pred_faceid_embeddings = torch.cat(pred_faceid_embeddings, dim=0).unsqueeze(1)  # [B, 1, 512]
+    
+    source_faceid_embeddings = source_faceid_embeddings.to(device)
+    
+    pred_flat = pred_faceid_embeddings.squeeze(1)  # [B, 512]
+    source_flat = source_faceid_embeddings.squeeze(1)  # [B, 512]
+    
+    pred_norm = F.normalize(pred_flat, p=2.0, dim=-1)
+    source_norm = F.normalize(source_flat, p=2.0, dim=-1)
+
+    cosine_sim = (pred_norm * source_norm).sum(dim=-1)  # [B]
+    l_id_loss = (1 - cosine_sim).mean()
+    
+    return l_id_loss
 
 
 def main(args):
@@ -1389,6 +1468,37 @@ def main(args):
                     return_dict=False,
                 )[0]
 
+                # ======================= L_id Branch =========================
+                # Second forward pass for identity preservation loss
+                # Uses same target image, noise, timesteps, and landmarks,
+                # but with source faceid embeddings and source caption.
+                model_pred_id = None
+                if "source_faceid_embeddings" in batch and "source_input_ids" in batch:
+                    encoder_hidden_states_id = text_encoder(batch["source_input_ids"], return_dict=False)[0]
+                    
+                    down_block_res_samples_id, mid_block_res_sample_id = controlnet(
+                        noisy_latents,
+                        timesteps,
+                        encoder_hidden_states=encoder_hidden_states_id,
+                        controlnet_cond=controlnet_image,
+                        return_dict=False,
+                    )
+                    
+                    source_image_embeds = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
+                    encoder_hidden_states_id = ip_adapter(encoder_hidden_states_id, source_image_embeds)
+                    
+                    model_pred_id = unet(
+                        noisy_latents,
+                        timesteps,
+                        encoder_hidden_states=encoder_hidden_states_id,
+                        down_block_additional_residuals=[
+                            sample.to(dtype=weight_dtype) for sample in down_block_res_samples_id
+                        ],
+                        mid_block_additional_residual=mid_block_res_sample_id.to(dtype=weight_dtype),
+                        return_dict=False,
+                    )[0]
+                # ======================= L_id Branch =========================
+
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
@@ -1397,6 +1507,25 @@ def main(args):
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                
+                # Compute L_id loss (identity preservation loss)
+                if model_pred_id is not None:
+                    try:
+                        pred_x0 = one_step_clean_pixel_extraction(
+                            model_pred_id, noisy_latents, timesteps, noise_scheduler, vae, args.use_fixed_timestep
+                        )
+                        
+                        source_faceid_emb = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
+                        loss_id = compute_id_loss(
+                            pred_x0=pred_x0,
+                            source_faceid_embeddings=source_faceid_emb,
+                            encoder_path=args.faceid_encoder_path,
+                            device=accelerator.device
+                        )
+
+                        loss += args.id_loss_weight * loss_id
+                    except Exception as e:
+                        logger.warning(f"Skipping L_id loss computation due to error: {e}")
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
