@@ -26,7 +26,6 @@ import shutil
 from pathlib import Path
 
 import accelerate
-import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -37,7 +36,6 @@ from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 from datasets import load_dataset
 from huggingface_hub import create_repo, upload_folder
-from insightface.app import FaceAnalysis
 from packaging import version
 from PIL import Image
 from torchvision import transforms
@@ -564,19 +562,7 @@ def parse_args(input_args=None):
         "--faceid_embedding_column",
         type=str,
         default="faceid_embedding",
-        help="The column of the dataset containing the target faceid embedding pt file path.",
-    )
-    parser.add_argument(
-        "--source_faceid_embedding_column",
-        type=str,
-        default="source_faceid_embedding",
-        help="The column of the dataset containing the source faceid embedding pt file path.",
-    )
-    parser.add_argument(
-        "--source_caption_column",
-        type=str,
-        default="source_text",
-        help="The column of the dataset containing the source image caption (for L_id branch).",
+        help="The column of the dataset containing the faceid embedding pt file path.",
     )
     parser.add_argument(
         "--max_train_samples",
@@ -649,6 +635,12 @@ def parse_args(input_args=None):
             "When enabled, uses the maximum timestep (num_train_timesteps - 1) from the scheduler. "
             "This enables one-step generation similar to SD-Turbo training."
         ),
+    )
+    # IP-Adapter arguments
+    parser.add_argument(
+        "--enable_ip_adapter",
+        action="store_true",
+        help="Enable IP-Adapter training alongside ControlNet.",
     )
     parser.add_argument(
         "--pretrained_ip_adapter_path",
@@ -774,41 +766,21 @@ def make_train_dataset(args, tokenizer, accelerator):
                 f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
             )
     
-    if args.faceid_embedding_column is None:
-        faceid_embedding_column = column_names[3]
-        logger.info(f"faceid embedding column defaulting to {faceid_embedding_column}")
-    else:
-        faceid_embedding_column = args.faceid_embedding_column
-        if faceid_embedding_column not in column_names:
-            raise ValueError(
-                f"`--faceid_embedding_column` value '{args.faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
+    if args.enable_ip_adapter:
+        if args.faceid_embedding_column is None:
+            faceid_embedding_column = column_names[3]
+            logger.info(f"faceid embedding column defaulting to {faceid_embedding_column}")
+        else:
+            faceid_embedding_column = args.faceid_embedding_column
+            if faceid_embedding_column not in column_names:
+                raise ValueError(
+                    f"`--faceid_embedding_column` value '{args.faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+                )
 
-    if args.source_faceid_embedding_column is None:
-        source_faceid_embedding_column = column_names[4]
-        logger.info(f"source faceid embedding column defaulting to {source_faceid_embedding_column}")
-    else:
-        source_faceid_embedding_column = args.source_faceid_embedding_column
-        if source_faceid_embedding_column not in column_names:
-            raise ValueError(
-                f"`--source_faceid_embedding_column` value '{args.source_faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
-    if args.source_caption_column is None:
-        source_caption_column = column_names[5]
-        logger.info(f"source caption column defaulting to {source_caption_column}")
-    else:
-        source_caption_column = args.source_caption_column
-        if source_caption_column not in column_names:
-            raise ValueError(
-                f"`--source_caption_column` value '{args.source_caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
-    def tokenize_captions(examples, caption_col, is_train=True, apply_empty_prompt_dropout=True):
-        """Tokenize captions from a specified column."""
+    def tokenize_captions(examples, is_train=True):
         captions = []
-        for caption in examples[caption_col]:
-            if apply_empty_prompt_dropout and random.random() < args.proportion_empty_prompts:
+        for caption in examples[caption_column]:
+            if random.random() < args.proportion_empty_prompts:
                 captions.append("")
             elif isinstance(caption, str):
                 captions.append(caption)
@@ -817,7 +789,7 @@ def make_train_dataset(args, tokenizer, accelerator):
                 captions.append(random.choice(caption) if is_train else caption[0])
             else:
                 raise ValueError(
-                    f"Caption column `{caption_col}` should contain either strings or lists of strings."
+                    f"Caption column `{caption_column}` should contain either strings or lists of strings."
                 )
         inputs = tokenizer(
             captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
@@ -861,31 +833,22 @@ def make_train_dataset(args, tokenizer, accelerator):
 
         examples["pixel_values"] = images
         examples["conditioning_pixel_values"] = conditioning_images
-        examples["input_ids"] = tokenize_captions(examples, caption_column)
+        examples["input_ids"] = tokenize_captions(examples)
 
-        # Load FaceID embeddings for IP-Adapter (target embeddings)
-        faceid_embeddings = []
-        drop_image_embeds = []
-        for embed_path in examples[faceid_embedding_column]:
-            # Randomly drop image embeddings for cfg
-            drop_image_embed = 1 if random.random() < args.ip_adapter_image_drop_rate else 0
-            drop_image_embeds.append(drop_image_embed)
-            embed_full_path = Path(args.train_data_dir) / embed_path
-            face_id_embed = torch.load(embed_full_path, map_location="cpu")
-            faceid_embeddings.append(face_id_embed)
-        
-        examples["faceid_embeddings"] = faceid_embeddings
-        examples["drop_image_embeds"] = drop_image_embeds
-
-        # Load source FaceID embeddings for face swapping
-        source_faceid_embeddings = []
-        for embed_path in examples[source_faceid_embedding_column]:
-            embed_full_path = Path(args.train_data_dir) / embed_path
-            source_face_id_embed = torch.load(embed_full_path, map_location="cpu")
-            source_faceid_embeddings.append(source_face_id_embed)
-
-        examples["source_faceid_embeddings"] = source_faceid_embeddings
-        examples["source_input_ids"] = tokenize_captions(examples, source_caption_column, apply_empty_prompt_dropout=False)
+        # Load FaceID embeddings for IP-Adapter
+        if args.enable_ip_adapter:
+            faceid_embeddings = []
+            drop_image_embeds = []
+            for embed_path in examples[faceid_embedding_column]:
+                # Randomly drop image embeddings for cfg
+                drop_image_embed = 1 if random.random() < args.ip_adapter_image_drop_rate else 0
+                drop_image_embeds.append(drop_image_embed)
+                embed_full_path = Path(args.train_data_dir) / embed_path
+                face_id_embed = torch.load(embed_full_path, map_location="cpu")
+                faceid_embeddings.append(face_id_embed)
+            
+            examples["faceid_embeddings"] = faceid_embeddings
+            examples["drop_image_embeds"] = drop_image_embeds
 
         return examples
 
@@ -913,168 +876,14 @@ def collate_fn(examples):
         "input_ids": input_ids,
     }
 
-    # Add IP-Adapter FaceID embeddings if available (target embeddings)
+    # Add IP-Adapter FaceID embeddings if available
     if "faceid_embeddings" in examples[0]:
         faceid_embeddings = torch.cat([example["faceid_embeddings"] for example in examples], dim=0)
         drop_image_embeds = [example["drop_image_embeds"] for example in examples]
         result["faceid_embeddings"] = faceid_embeddings
         result["drop_image_embeds"] = drop_image_embeds
 
-    # Add source FaceID embeddings
-    if "source_faceid_embeddings" in examples[0]:
-        source_faceid_embeddings = torch.cat([example["source_faceid_embeddings"] for example in examples], dim=0)
-        result["source_faceid_embeddings"] = source_faceid_embeddings
-
-    # Add source caption input_ids for L_id branch
-    if "source_input_ids" in examples[0]:
-        source_input_ids = torch.stack([example["source_input_ids"] for example in examples])
-        result["source_input_ids"] = source_input_ids
-
     return result
-
-
-def convert_model_pred_to_pixel_space_z0(
-    model_pred_id, noisy_latents, timesteps, noise_scheduler, vae
-):
-    """
-    Convert model_pred_id (noise prediction) to pixel space z_0 (denoised image).
-    
-    This function should:
-    1. Convert noise prediction to denoised latents using the scheduler
-    2. Decode latents to pixel space using VAE
-    
-    Args:
-        model_pred_id: Noise prediction from UNet [B, C, H, W]
-        noisy_latents: Noisy latents [B, C, H, W]
-        timesteps: Timesteps used for denoising [B]
-        noise_scheduler: Noise scheduler for denoising step
-        vae: VAE model for decoding latents to pixel space
-        
-    Returns:
-        z_0: Denoised image in pixel space [B, 3, H, W] (RGB, values in [0, 1] or [-1, 1])
-    """
-    # TODO: Implement conversion from model_pred_id to pixel space z_0
-    # Steps:
-    # 1. Use scheduler to denoise: z_0 = scheduler.step(model_pred_id, timesteps, noisy_latents).prev_sample
-    # 2. Decode latents with VAE: z_0_pixel = vae.decode(z_0 / vae.config.scaling_factor).sample
-    # 3. Normalize/convert to proper range if needed
-    raise NotImplementedError("convert_model_pred_to_pixel_space_z0 not yet implemented")
-
-
-def extract_face_embedding_from_image(face_analysis_app, image_tensor):
-    """
-    Extract face embedding from a pixel space image tensor using InsightFace.
-    
-    Args:
-        face_analysis_app: InsightFace FaceAnalysis app instance
-        image_tensor: Image tensor in pixel space [B, 3, H, W] or [3, H, W]
-                      Expected to be in range [0, 1] or [-1, 1], RGB format
-        
-    Returns:
-        face_embedding: Face embedding tensor [1, 512] or None if no face detected
-    """
-    # Convert tensor to numpy array
-    if image_tensor.dim() == 4:  # [B, 3, H, W]
-        # Process first image in batch
-        img_np = image_tensor[0].detach().cpu()
-    else:  # [3, H, W]
-        img_np = image_tensor.detach().cpu()
-    
-    # Convert from [C, H, W] to [H, W, C] and to numpy
-    img_np = img_np.permute(1, 2, 0).numpy()
-    
-    # Normalize to [0, 255] range if needed
-    if img_np.min() < 0:  # Assuming [-1, 1] range
-        img_np = (img_np + 1) / 2.0
-    img_np = (img_np * 255).astype(np.uint8)
-    
-    # Convert RGB to BGR for OpenCV
-    img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-    
-    # Detect faces
-    faces = face_analysis_app.get(img_bgr)
-    
-    if len(faces) == 0:
-        # Try with smaller detection size (similar to extraction script)
-        original_size = face_analysis_app.det_model.input_size
-        face_analysis_app.det_model.input_size = (512, 512)
-        faces = face_analysis_app.get(img_bgr)
-        face_analysis_app.det_model.input_size = original_size
-        
-        if len(faces) == 0:
-            return None
-    
-    # Sort to find the largest face (in case background faces are detected)
-    faces = sorted(faces, key=lambda x: (x.bbox[2]-x.bbox[0]) * (x.bbox[3]-x.bbox[1]), reverse=True)
-    
-    # Extract embedding from the largest face
-    face_embedding = torch.from_numpy(faces[0].normed_embedding).unsqueeze(0)
-    
-    return face_embedding
-
-
-def compute_l_id_loss(model_pred_id, noisy_latents, timesteps, noise_scheduler, vae, 
-                      source_faceid_embeddings, face_analysis_app, device):
-    """
-    Compute L_id loss: identity preservation loss using cosine similarity.
-    
-    Loss = 1 - cosine_similarity(extracted_face_embedding, source_faceid_embedding)
-    
-    Args:
-        model_pred_id: Noise prediction from L_id branch [B, C, H, W]
-        noisy_latents: Noisy latents [B, C, H, W]
-        timesteps: Timesteps [B]
-        noise_scheduler: Noise scheduler
-        vae: VAE model for decoding
-        source_faceid_embeddings: Ground truth source face embeddings [B, 1, 512]
-        face_analysis_app: InsightFace FaceAnalysis app instance
-        device: Device to run computations on
-        
-    Returns:
-        l_id_loss: Identity preservation loss (scalar tensor)
-    """
-    # Convert model_pred_id to pixel space z_0
-    z_0_pixel = convert_model_pred_to_pixel_space_z0(
-        model_pred_id, noisy_latents, timesteps, noise_scheduler, vae
-    )
-    
-    # Extract face embeddings from generated images
-    batch_size = z_0_pixel.shape[0]
-    extracted_embeddings = []
-    
-    for i in range(batch_size):
-        img_tensor = z_0_pixel[i]  # [3, H, W]
-        face_emb = extract_face_embedding_from_image(face_analysis_app, img_tensor)
-        
-        if face_emb is None:
-            # If no face detected, use zero embedding (or skip this sample)
-            # For now, we'll use a zero embedding to avoid breaking the batch
-            face_emb = torch.zeros(1, 512, device=device)
-        
-        extracted_embeddings.append(face_emb)
-    
-    # Stack extracted embeddings [B, 1, 512]
-    extracted_embeddings = torch.cat(extracted_embeddings, dim=0).unsqueeze(1)  # [B, 1, 512]
-    
-    # Ensure source_faceid_embeddings is on the same device
-    source_faceid_embeddings = source_faceid_embeddings.to(device)
-    
-    # Compute cosine similarity: [B, 1, 512] @ [B, 512, 1] -> [B, 1, 1]
-    # Flatten to [B, 512] for easier computation
-    extracted_flat = extracted_embeddings.squeeze(1)  # [B, 512]
-    source_flat = source_faceid_embeddings.squeeze(1)  # [B, 512]
-    
-    # Normalize embeddings
-    extracted_norm = F.normalize(extracted_flat, p=2, dim=1)
-    source_norm = F.normalize(source_flat, p=2, dim=1)
-    
-    # Compute cosine similarity: dot product of normalized vectors
-    cosine_sim = (extracted_norm * source_norm).sum(dim=1)  # [B]
-    
-    # Loss = 1 - cosine_similarity (mean over batch)
-    l_id_loss = (1 - cosine_sim).mean()
-    
-    return l_id_loss
 
 
 def main(args):
@@ -1152,10 +961,6 @@ def main(args):
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
     )
-    
-    # Initialize InsightFace for L_id loss computation
-    face_analysis_app = FaceAnalysis(name="antelopev2", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-    face_analysis_app.prepare(ctx_id=0, det_size=(640, 640))
 
     if args.controlnet_model_name_or_path:
         logger.info("Loading existing controlnet weights")
@@ -1165,51 +970,53 @@ def main(args):
         controlnet = ControlNetModel.from_unet(unet, conditioning_channels=args.conditioning_channels)
 
     # Initialize IP-Adapter components
-    logger.info("Initializing IP-Adapter components")
-    
-    # Initialize IP-Adapter projection model
-    image_proj_model_ip_adapter = MLPProjModel(
-        cross_attention_dim=unet.config.cross_attention_dim,
-        id_embeddings_dim=args.faceid_embedding_dim,
-        num_tokens=4,
-    )
-    
-    # Initialize IP-Adapter attention processors
-    attn_procs = {}
-    unet_sd = unet.state_dict()
-    for name in unet.attn_processors.keys():
-        cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
-        if name.startswith("mid_block"):
-            hidden_size = unet.config.block_out_channels[-1]
-        elif name.startswith("up_blocks"):
-            block_id = int(name[len("up_blocks.")])
-            hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-        elif name.startswith("down_blocks"):
-            block_id = int(name[len("down_blocks.")])
-            hidden_size = unet.config.block_out_channels[block_id]
-        if cross_attention_dim is None:
-            attn_procs[name] = LoRAAttnProcessor(
-                hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
-            )
-        else:
-            layer_name = name.split(".processor")[0]
-            weights = {
-                "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
-                "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
-            }
-            attn_procs[name] = LoRAIPAttnProcessor(
-                hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
-            )
-            attn_procs[name].load_state_dict(weights, strict=False)
-    unet.set_attn_processor(attn_procs)
-    ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
-    
-    # Create IP-Adapter wrapper class
-    ip_adapter = IPAdapter(
-        image_proj_model=image_proj_model_ip_adapter,
-        adapter_modules=ip_adapter_modules,
-        ckpt_path=args.pretrained_ip_adapter_path
-    )
+    ip_adapter = None
+    if args.enable_ip_adapter:
+        logger.info("Initializing IP-Adapter components")
+        
+        # Initialize IP-Adapter projection model
+        image_proj_model_ip_adapter = MLPProjModel(
+            cross_attention_dim=unet.config.cross_attention_dim,
+            id_embeddings_dim=args.faceid_embedding_dim,
+            num_tokens=4,
+        )
+        
+        # Initialize IP-Adapter attention processors
+        attn_procs = {}
+        unet_sd = unet.state_dict()
+        for name in unet.attn_processors.keys():
+            cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
+            if name.startswith("mid_block"):
+                hidden_size = unet.config.block_out_channels[-1]
+            elif name.startswith("up_blocks"):
+                block_id = int(name[len("up_blocks.")])
+                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
+            elif name.startswith("down_blocks"):
+                block_id = int(name[len("down_blocks.")])
+                hidden_size = unet.config.block_out_channels[block_id]
+            if cross_attention_dim is None:
+                attn_procs[name] = LoRAAttnProcessor(
+                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
+                )
+            else:
+                layer_name = name.split(".processor")[0]
+                weights = {
+                    "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
+                    "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
+                }
+                attn_procs[name] = LoRAIPAttnProcessor(
+                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
+                )
+                attn_procs[name].load_state_dict(weights, strict=False)
+        unet.set_attn_processor(attn_procs)
+        ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
+        
+        # Create IP-Adapter wrapper class
+        ip_adapter = IPAdapter(
+            image_proj_model=image_proj_model_ip_adapter,
+            adapter_modules=ip_adapter_modules,
+            ckpt_path=args.pretrained_ip_adapter_path
+        )
 
     # Taken from [Sayak Paul's Diffusers PR #6511](https://github.com/huggingface/diffusers/pull/6511/files)
     def unwrap_model(model):
@@ -1232,7 +1039,7 @@ def main(args):
                     if isinstance(model, ControlNetModel):
                         sub_dir = "controlnet"
                         model.save_pretrained(os.path.join(output_dir, sub_dir))
-                    elif not ip_adapter_saved:
+                    elif args.enable_ip_adapter and not ip_adapter_saved:
                         if isinstance(model, IPAdapter):
                             # Save IP-Adapter components (checkpoint save) to subdirectory
                             unwrapped_ip_adapter = unwrap_model(ip_adapter)
@@ -1258,7 +1065,7 @@ def main(args):
 
                     model.load_state_dict(load_model.state_dict())
                     del load_model
-                elif not ip_adapter_loaded:
+                elif args.enable_ip_adapter and not ip_adapter_loaded:
                     ip_adapter_path = os.path.join(input_dir, "ip_adapter", "ip_adapter.bin")
                     if os.path.exists(ip_adapter_path):
                         unwrapped_ip_adapter = unwrap_model(ip_adapter)
@@ -1272,7 +1079,8 @@ def main(args):
     unet.requires_grad_(False)
     text_encoder.requires_grad_(False)
     controlnet.train()
-    ip_adapter.train()
+    if args.enable_ip_adapter:
+        ip_adapter.train()
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -1326,14 +1134,18 @@ def main(args):
         optimizer_class = torch.optim.AdamW
 
     # Optimizer creation
-    params_to_optimize = itertools.chain(
-        controlnet.parameters(),
-        ip_adapter.image_proj_model.parameters(),
-        ip_adapter.adapter_modules.parameters()
-    )
-    # Convert to list once (optimizer accepts both list and iterator)
-    params_to_optimize = list(params_to_optimize)
-    logger.info(f"Optimizing ControlNet + IP-Adapter parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
+    if args.enable_ip_adapter:
+        params_to_optimize = itertools.chain(
+            controlnet.parameters(),
+            ip_adapter.image_proj_model.parameters(),
+            ip_adapter.adapter_modules.parameters()
+        )
+        # Convert to list once (optimizer accepts both list and iterator)
+        params_to_optimize = list(params_to_optimize)
+        logger.info(f"Optimizing ControlNet + IP-Adapter parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
+    else:
+        params_to_optimize = controlnet.parameters()
+        logger.info(f"Optimizing ControlNet parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
     
     optimizer = optimizer_class(
         params_to_optimize,
@@ -1375,9 +1187,14 @@ def main(args):
     )
 
     # Prepare everything with our `accelerator`.
-    controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler
-    )
+    if args.enable_ip_adapter:
+        controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+            controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler
+        )
+    else:
+        controlnet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+            controlnet, optimizer, train_dataloader, lr_scheduler
+        )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
@@ -1511,7 +1328,7 @@ def main(args):
                 )
 
                 # ======================= IP-Adapter =========================
-                if "faceid_embeddings" in batch:
+                if args.enable_ip_adapter and "faceid_embeddings" in batch:
                     image_embeds = batch["faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
                     
                     # Apply drop for cfg
@@ -1539,39 +1356,6 @@ def main(args):
                     return_dict=False,
                 )[0]
 
-                # ======================= L_id Branch =========================
-                # Second forward pass for identity preservation loss
-                # Uses same target image, noise, timesteps, and landmarks,
-                # but with source faceid embeddings and source caption.
-                model_pred_id = None
-                if "source_faceid_embeddings" in batch and "source_input_ids" in batch:
-                    encoder_hidden_states_id = text_encoder(batch["source_input_ids"], return_dict=False)[0]
-                    
-                    down_block_res_samples_id, mid_block_res_sample_id = controlnet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states=encoder_hidden_states_id,
-                        controlnet_cond=controlnet_image,
-                        return_dict=False,
-                    )
-                    
-                    # Apply IP-Adapter with source faceid embeddings (no dropout for L_id)
-                    source_image_embeds = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
-                    encoder_hidden_states_id = ip_adapter(encoder_hidden_states_id, source_image_embeds)
-                    
-                    # Predict the noise residual for L_id branch
-                    model_pred_id = unet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states=encoder_hidden_states_id,
-                        down_block_additional_residuals=[
-                            sample.to(dtype=weight_dtype) for sample in down_block_res_samples_id
-                        ],
-                        mid_block_additional_residual=mid_block_res_sample_id.to(dtype=weight_dtype),
-                        return_dict=False,
-                    )[0]
-                # ======================= L_id Branch =========================
-
                 # Get the target for loss depending on the prediction type
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
@@ -1580,36 +1364,18 @@ def main(args):
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-                
-                # Compute L_id loss (identity preservation loss)
-                if model_pred_id is not None and face_analysis_app is not None:
-                    try:
-                        source_faceid_emb = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
-                        loss_id = compute_l_id_loss(
-                            model_pred_id=model_pred_id,
-                            noisy_latents=noisy_latents,
-                            timesteps=timesteps,
-                            noise_scheduler=noise_scheduler,
-                            vae=vae,
-                            source_faceid_embeddings=source_faceid_emb,
-                            face_analysis_app=face_analysis_app,
-                            device=accelerator.device
-                        )
-                        # Add L_id loss to main loss (you may want to add a weight hyperparameter)
-                        loss = loss + loss_id
-                    except Exception as e:
-                        # If face detection fails or other errors occur, skip L_id loss for this batch
-                        logger.warning(f"Skipping L_id loss computation due to error: {e}")
-                        pass
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    # Clip gradients for both ControlNet and IP-Adapter
-                    params_to_clip = itertools.chain(
-                        controlnet.parameters(),
-                        ip_adapter.image_proj_model.parameters(),
-                        ip_adapter.adapter_modules.parameters()
-                    )
+                    if args.enable_ip_adapter:
+                        # Clip gradients for both ControlNet and IP-Adapter
+                        params_to_clip = itertools.chain(
+                            controlnet.parameters(),
+                            ip_adapter.image_proj_model.parameters(),
+                            ip_adapter.adapter_modules.parameters()
+                        )
+                    else:
+                        params_to_clip = controlnet.parameters()
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
@@ -1673,13 +1439,14 @@ def main(args):
         controlnet_dir = os.path.join(args.output_dir, "controlnet")
         controlnet.save_pretrained(controlnet_dir)
         
-        # Save IP-Adapter
-        ip_adapter_unwrapped = unwrap_model(ip_adapter)
-        ip_adapter_dir = os.path.join(args.output_dir, "ip_adapter")
-        os.makedirs(ip_adapter_dir, exist_ok=True)
-        ip_adapter_path = os.path.join(ip_adapter_dir, "ip_adapter.bin")
-        ip_adapter_unwrapped.save_to_file(ip_adapter_path)
-        logger.info(f"Saved IP-Adapter to {ip_adapter_path}")
+        # Save IP-Adapter if enabled
+        if args.enable_ip_adapter:
+            ip_adapter_unwrapped = unwrap_model(ip_adapter)
+            ip_adapter_dir = os.path.join(args.output_dir, "ip_adapter")
+            os.makedirs(ip_adapter_dir, exist_ok=True)
+            ip_adapter_path = os.path.join(ip_adapter_dir, "ip_adapter.bin")
+            ip_adapter_unwrapped.save_to_file(ip_adapter_path)
+            logger.info(f"Saved IP-Adapter to {ip_adapter_path}")
 
         # Run a final round of validation.
         image_logs = None
