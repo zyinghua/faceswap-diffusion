@@ -573,7 +573,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--source_caption_column",
         type=str,
-        default="source_caption",
+        default="source_text",
         help="The column of the dataset containing the source image caption (for L_id branch).",
     )
     parser.add_argument(
