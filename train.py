@@ -978,33 +978,32 @@ def one_step_clean_pixel_extraction(model_pred_id, noisy_latents, timesteps, noi
     return pred_x0
 
 
-def extract_faceid_embedding(encoder_path, img_tensor):
-    raise NotImplementedError()
+def extract_faceid_embedding(faceid_encoder, pred_x0, device):
+    """
+    Extract FaceID embedding using a frozen FaceID encoder model.
+    """
+    pred_tensor_resized = F.interpolate(pred_x0, size=(112, 112), mode="bilinear", align_corners=False)  # [B, 3, 112, 112]
+    
+    # Normalize: transform from [0, 1] to [-1, 1]
+    pred_tensor_normalized = pred_tensor_resized * 2 - 1
+    pred_tensor_normalized = pred_tensor_normalized.to(device)
+    
+    with torch.no_grad():
+        embeddings = faceid_encoder(pred_tensor_normalized)  # [B, 512]
+    
+    return F.normalize(embeddings, p=2.0, dim=1)
 
 
-def compute_id_loss(pred_x0, source_faceid_embeddings, encoder_path, device):
+def compute_id_loss(pred_x0, source_faceid_embeddings, faceid_encoder, device):
     """
     Compute L_id loss: identity preservation loss using cosine similarity.
     """
-    batch_size = pred_x0.shape[0]
-    pred_faceid_embeddings = []
-    
-    for i in range(batch_size):
-        img_tensor = pred_x0[i]  # [3, H, W]
-        face_emb = extract_faceid_embedding(encoder_path, img_tensor)
-        pred_faceid_embeddings.append(face_emb)
-    
-    pred_faceid_embeddings = torch.cat(pred_faceid_embeddings, dim=0).unsqueeze(1)  # [B, 1, 512]
+    pred_faceid_embeddings = extract_faceid_embedding(faceid_encoder, pred_x0, device)  # [B, 512]
     
     source_faceid_embeddings = source_faceid_embeddings.to(device)
-    
-    pred_flat = pred_faceid_embeddings.squeeze(1)  # [B, 512]
     source_flat = source_faceid_embeddings.squeeze(1)  # [B, 512]
     
-    pred_norm = F.normalize(pred_flat, p=2.0, dim=-1)
-    source_norm = F.normalize(source_flat, p=2.0, dim=-1)
-
-    cosine_sim = (pred_norm * source_norm).sum(dim=-1)  # [B]
+    cosine_sim = (pred_faceid_embeddings * source_flat).sum(dim=-1)  # [B]
     l_id_loss = (1 - cosine_sim).mean()
     
     return l_id_loss
@@ -1092,6 +1091,12 @@ def main(args):
     else:
         logger.info("Initializing controlnet weights from unet")
         controlnet = ControlNetModel.from_unet(unet, conditioning_channels=args.conditioning_channels)
+
+    # Load FaceID encoder model for id loss
+    logger.info(f"Loading FaceID encoder weights")
+    faceid_encoder = iresnet100(pretrained=False, fp16=False)
+    faceid_encoder.load_state_dict(torch.load(args.faceid_encoder_path, map_location=accelerator.device))
+    faceid_encoder.requires_grad_(False)
 
     # Initialize IP-Adapter components
     logger.info("Initializing IP-Adapter components")
@@ -1320,6 +1325,7 @@ def main(args):
     vae.to(accelerator.device, dtype=weight_dtype)
     unet.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
+    faceid_encoder.to(accelerator.device)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -1519,7 +1525,7 @@ def main(args):
                         loss_id = compute_id_loss(
                             pred_x0=pred_x0,
                             source_faceid_embeddings=source_faceid_emb,
-                            encoder_path=args.faceid_encoder_path,
+                            faceid_encoder=faceid_encoder,
                             device=accelerator.device
                         )
 
