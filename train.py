@@ -40,7 +40,7 @@ from packaging import version
 from PIL import Image
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, PretrainedConfig, CLIPImageProcessor, CLIPVisionModelWithProjection
+from transformers import AutoTokenizer, PretrainedConfig
 
 import diffusers
 from diffusers import (
@@ -57,13 +57,8 @@ from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 
-from ip_adapter.ip_adapter import ImageProjModel
-from ip_adapter.utils import is_torch2_available
-if is_torch2_available():
-    from ip_adapter.attention_processor import AttnProcessor2_0 as AttnProcessor
-    from ip_adapter.attention_processor import IPAttnProcessor2_0 as IPAttnProcessor
-else:
-    from ip_adapter.attention_processor import AttnProcessor, IPAttnProcessor
+from ip_adapter.ip_adapter_faceid import MLPProjModel
+from ip_adapter.attention_processor_faceid import LoRAAttnProcessor, LoRAIPAttnProcessor
 
 if is_wandb_available():
     import wandb
@@ -564,6 +559,12 @@ def parse_args(input_args=None):
         help="The column of the dataset containing a caption or a list of captions.",
     )
     parser.add_argument(
+        "--faceid_embedding_column",
+        type=str,
+        default="faceid_embedding",
+        help="The column of the dataset containing the faceid embedding pt file path.",
+    )
+    parser.add_argument(
         "--max_train_samples",
         type=int,
         default=None,
@@ -642,12 +643,6 @@ def parse_args(input_args=None):
         help="Enable IP-Adapter training alongside ControlNet.",
     )
     parser.add_argument(
-        "--image_encoder_path",
-        type=str,
-        default=None,
-        help="Path to CLIP image encoder for IP-Adapter. Required if --enable_ip_adapter is set.",
-    )
-    parser.add_argument(
         "--pretrained_ip_adapter_path",
         type=str,
         default=None,
@@ -658,6 +653,18 @@ def parse_args(input_args=None):
         type=float,
         default=0.0,
         help="Drop rate for IP-Adapter image embeddings during training (for classifier-free guidance).",
+    )
+    parser.add_argument(
+        "--faceid_embedding_dim",
+        type=int,
+        default=512,
+        help="Dimension of FaceID embeddings. Default is 512.",
+    )
+    parser.add_argument(
+        "--ip_adapter_lora_rank",
+        type=int,
+        default=128,
+        help="LoRA rank for IP-Adapter FaceID attention processors. Default is 128.",
     )
 
     if input_args is not None:
@@ -693,10 +700,6 @@ def parse_args(input_args=None):
         raise ValueError(
             "`--resolution` must be divisible by 8 for consistently sized encoded images between the VAE and the controlnet encoder."
         )
-
-    # IP-Adapter validation
-    if args.enable_ip_adapter and args.image_encoder_path is None:
-        raise ValueError("`--image_encoder_path` must be specified when `--enable_ip_adapter` is set.")
 
     return args
 
@@ -762,6 +765,17 @@ def make_train_dataset(args, tokenizer, accelerator):
             raise ValueError(
                 f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
             )
+    
+    if args.enable_ip_adapter:
+        if args.faceid_embedding_column is None:
+            faceid_embedding_column = column_names[3]
+            logger.info(f"faceid embedding column defaulting to {faceid_embedding_column}")
+        else:
+            faceid_embedding_column = args.faceid_embedding_column
+            if faceid_embedding_column not in column_names:
+                raise ValueError(
+                    f"`--faceid_embedding_column` value '{args.faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+                )
 
     def tokenize_captions(examples, is_train=True):
         captions = []
@@ -799,11 +813,6 @@ def make_train_dataset(args, tokenizer, accelerator):
         ]
     )
 
-    # CLIP image processor for IP-Adapter
-    clip_image_processor = None
-    if args.enable_ip_adapter:
-        clip_image_processor = CLIPImageProcessor()
-
     def preprocess_train(examples):
         images = [image.convert("RGB") for image in examples[image_column]]
         images = [image_transforms(image) for image in images]
@@ -826,19 +835,19 @@ def make_train_dataset(args, tokenizer, accelerator):
         examples["conditioning_pixel_values"] = conditioning_images
         examples["input_ids"] = tokenize_captions(examples)
 
-        # Process images for IP-Adapter CLIP encoder
+        # Load FaceID embeddings for IP-Adapter
         if args.enable_ip_adapter:
-            clip_images = [image.convert("RGB") for image in examples[image_column]]
-            clip_images_processed = []
+            faceid_embeddings = []
             drop_image_embeds = []
-            for img in clip_images:
+            for embed_path in examples[faceid_embedding_column]:
                 # Randomly drop image embeddings for cfg
                 drop_image_embed = 1 if random.random() < args.ip_adapter_image_drop_rate else 0
                 drop_image_embeds.append(drop_image_embed)
-                # Process image for CLIP
-                clip_img = clip_image_processor(images=img, return_tensors="pt").pixel_values
-                clip_images_processed.append(clip_img)
-            examples["clip_images"] = clip_images_processed
+                embed_full_path = Path(args.train_data_dir) / embed_path
+                face_id_embed = torch.load(embed_full_path, map_location="cpu")
+                faceid_embeddings.append(face_id_embed)
+            
+            examples["faceid_embeddings"] = faceid_embeddings
             examples["drop_image_embeds"] = drop_image_embeds
 
         return examples
@@ -867,11 +876,11 @@ def collate_fn(examples):
         "input_ids": input_ids,
     }
 
-    # Add IP-Adapter data if available
-    if "clip_images" in examples[0]:
-        clip_images = torch.cat([example["clip_images"] for example in examples], dim=0)
+    # Add IP-Adapter FaceID embeddings if available
+    if "faceid_embeddings" in examples[0]:
+        faceid_embeddings = torch.cat([example["faceid_embeddings"] for example in examples], dim=0)
         drop_image_embeds = [example["drop_image_embeds"] for example in examples]
-        result["clip_images"] = clip_images
+        result["faceid_embeddings"] = faceid_embeddings
         result["drop_image_embeds"] = drop_image_embeds
 
     return result
@@ -961,18 +970,15 @@ def main(args):
         controlnet = ControlNetModel.from_unet(unet, conditioning_channels=args.conditioning_channels)
 
     # Initialize IP-Adapter components
-    image_encoder_ip_adapter = None
     ip_adapter = None
     if args.enable_ip_adapter:
         logger.info("Initializing IP-Adapter components")
-        image_encoder_ip_adapter = CLIPVisionModelWithProjection.from_pretrained(args.image_encoder_path)
-        image_encoder_ip_adapter.requires_grad_(False)
         
         # Initialize IP-Adapter projection model
-        image_proj_model_ip_adapter = ImageProjModel(
+        image_proj_model_ip_adapter = MLPProjModel(
             cross_attention_dim=unet.config.cross_attention_dim,
-            clip_embeddings_dim=image_encoder_ip_adapter.config.projection_dim,
-            clip_extra_context_tokens=4,
+            id_embeddings_dim=args.faceid_embedding_dim,
+            num_tokens=4,
         )
         
         # Initialize IP-Adapter attention processors
@@ -989,15 +995,19 @@ def main(args):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
             if cross_attention_dim is None:
-                attn_procs[name] = AttnProcessor()
+                attn_procs[name] = LoRAAttnProcessor(
+                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
+                )
             else:
                 layer_name = name.split(".processor")[0]
                 weights = {
                     "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
                     "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
                 }
-                attn_procs[name] = IPAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
-                attn_procs[name].load_state_dict(weights)
+                attn_procs[name] = LoRAIPAttnProcessor(
+                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
+                )
+                attn_procs[name].load_state_dict(weights, strict=False)
         unet.set_attn_processor(attn_procs)
         ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
         
@@ -1198,8 +1208,6 @@ def main(args):
     vae.to(accelerator.device, dtype=weight_dtype)
     unet.to(accelerator.device, dtype=weight_dtype)
     text_encoder.to(accelerator.device, dtype=weight_dtype)
-    if args.enable_ip_adapter:
-        image_encoder_ip_adapter.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -1320,10 +1328,8 @@ def main(args):
                 )
 
                 # ======================= IP-Adapter =========================
-                if args.enable_ip_adapter and "clip_images" in batch:
-                    with torch.no_grad():
-                        clip_images = batch["clip_images"].to(accelerator.device, dtype=weight_dtype)
-                        image_embeds = image_encoder_ip_adapter(clip_images).image_embeds
+                if args.enable_ip_adapter and "faceid_embeddings" in batch:
+                    image_embeds = batch["faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
                     
                     # Apply drop for cfg
                     image_embeds_processed = []
