@@ -648,12 +648,6 @@ def parse_args(input_args=None):
             "This enables one-step generation similar to SD-Turbo training."
         ),
     )
-    # IP-Adapter arguments
-    parser.add_argument(
-        "--enable_ip_adapter",
-        action="store_true",
-        help="Enable IP-Adapter training alongside ControlNet.",
-    )
     parser.add_argument(
         "--pretrained_ip_adapter_path",
         type=str,
@@ -778,36 +772,35 @@ def make_train_dataset(args, tokenizer, accelerator):
                 f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
             )
     
-    if args.enable_ip_adapter:
-        if args.faceid_embedding_column is None:
-            faceid_embedding_column = column_names[3]
-            logger.info(f"faceid embedding column defaulting to {faceid_embedding_column}")
-        else:
-            faceid_embedding_column = args.faceid_embedding_column
-            if faceid_embedding_column not in column_names:
-                raise ValueError(
-                    f"`--faceid_embedding_column` value '{args.faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-                )
-    
-        if args.source_faceid_embedding_column is None:
-            source_faceid_embedding_column = column_names[4]
-            logger.info(f"source faceid embedding column defaulting to {source_faceid_embedding_column}")
-        else:
-            source_faceid_embedding_column = args.source_faceid_embedding_column
-            if source_faceid_embedding_column not in column_names:
-                raise ValueError(
-                    f"`--source_faceid_embedding_column` value '{args.source_faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-                )
-    
-        if args.source_caption_column is None:
-            source_caption_column = column_names[5]
-            logger.info(f"source caption column defaulting to {source_caption_column}")
-        else:
-            source_caption_column = args.source_caption_column
-            if source_caption_column not in column_names:
-                raise ValueError(
-                    f"`--source_caption_column` value '{args.source_caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-                )
+    if args.faceid_embedding_column is None:
+        faceid_embedding_column = column_names[3]
+        logger.info(f"faceid embedding column defaulting to {faceid_embedding_column}")
+    else:
+        faceid_embedding_column = args.faceid_embedding_column
+        if faceid_embedding_column not in column_names:
+            raise ValueError(
+                f"`--faceid_embedding_column` value '{args.faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+            )
+
+    if args.source_faceid_embedding_column is None:
+        source_faceid_embedding_column = column_names[4]
+        logger.info(f"source faceid embedding column defaulting to {source_faceid_embedding_column}")
+    else:
+        source_faceid_embedding_column = args.source_faceid_embedding_column
+        if source_faceid_embedding_column not in column_names:
+            raise ValueError(
+                f"`--source_faceid_embedding_column` value '{args.source_faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+            )
+
+    if args.source_caption_column is None:
+        source_caption_column = column_names[5]
+        logger.info(f"source caption column defaulting to {source_caption_column}")
+    else:
+        source_caption_column = args.source_caption_column
+        if source_caption_column not in column_names:
+            raise ValueError(
+                f"`--source_caption_column` value '{args.source_caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+            )
 
     def tokenize_captions(examples, caption_col, is_train=True, apply_empty_prompt_dropout=True):
         """Tokenize captions from a specified column."""
@@ -869,29 +862,28 @@ def make_train_dataset(args, tokenizer, accelerator):
         examples["input_ids"] = tokenize_captions(examples, caption_column)
 
         # Load FaceID embeddings for IP-Adapter (target embeddings)
-        if args.enable_ip_adapter:
-            faceid_embeddings = []
-            drop_image_embeds = []
-            for embed_path in examples[faceid_embedding_column]:
-                # Randomly drop image embeddings for cfg
-                drop_image_embed = 1 if random.random() < args.ip_adapter_image_drop_rate else 0
-                drop_image_embeds.append(drop_image_embed)
-                embed_full_path = Path(args.train_data_dir) / embed_path
-                face_id_embed = torch.load(embed_full_path, map_location="cpu")
-                faceid_embeddings.append(face_id_embed)
-            
-            examples["faceid_embeddings"] = faceid_embeddings
-            examples["drop_image_embeds"] = drop_image_embeds
+        faceid_embeddings = []
+        drop_image_embeds = []
+        for embed_path in examples[faceid_embedding_column]:
+            # Randomly drop image embeddings for cfg
+            drop_image_embed = 1 if random.random() < args.ip_adapter_image_drop_rate else 0
+            drop_image_embeds.append(drop_image_embed)
+            embed_full_path = Path(args.train_data_dir) / embed_path
+            face_id_embed = torch.load(embed_full_path, map_location="cpu")
+            faceid_embeddings.append(face_id_embed)
+        
+        examples["faceid_embeddings"] = faceid_embeddings
+        examples["drop_image_embeds"] = drop_image_embeds
 
-            # Load source FaceID embeddings for face swapping
-            source_faceid_embeddings = []
-            for embed_path in examples[source_faceid_embedding_column]:
-                embed_full_path = Path(args.train_data_dir) / embed_path
-                source_face_id_embed = torch.load(embed_full_path, map_location="cpu")
-                source_faceid_embeddings.append(source_face_id_embed)
+        # Load source FaceID embeddings for face swapping
+        source_faceid_embeddings = []
+        for embed_path in examples[source_faceid_embedding_column]:
+            embed_full_path = Path(args.train_data_dir) / embed_path
+            source_face_id_embed = torch.load(embed_full_path, map_location="cpu")
+            source_faceid_embeddings.append(source_face_id_embed)
 
-            examples["source_faceid_embeddings"] = source_faceid_embeddings
-            examples["source_input_ids"] = tokenize_captions(examples, source_caption_column, apply_empty_prompt_dropout=False)
+        examples["source_faceid_embeddings"] = source_faceid_embeddings
+        examples["source_input_ids"] = tokenize_captions(examples, source_caption_column, apply_empty_prompt_dropout=False)
 
         return examples
 
@@ -1023,53 +1015,51 @@ def main(args):
         controlnet = ControlNetModel.from_unet(unet, conditioning_channels=args.conditioning_channels)
 
     # Initialize IP-Adapter components
-    ip_adapter = None
-    if args.enable_ip_adapter:
-        logger.info("Initializing IP-Adapter components")
-        
-        # Initialize IP-Adapter projection model
-        image_proj_model_ip_adapter = MLPProjModel(
-            cross_attention_dim=unet.config.cross_attention_dim,
-            id_embeddings_dim=args.faceid_embedding_dim,
-            num_tokens=4,
-        )
-        
-        # Initialize IP-Adapter attention processors
-        attn_procs = {}
-        unet_sd = unet.state_dict()
-        for name in unet.attn_processors.keys():
-            cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
-            if name.startswith("mid_block"):
-                hidden_size = unet.config.block_out_channels[-1]
-            elif name.startswith("up_blocks"):
-                block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-            elif name.startswith("down_blocks"):
-                block_id = int(name[len("down_blocks.")])
-                hidden_size = unet.config.block_out_channels[block_id]
-            if cross_attention_dim is None:
-                attn_procs[name] = LoRAAttnProcessor(
-                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
-                )
-            else:
-                layer_name = name.split(".processor")[0]
-                weights = {
-                    "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
-                    "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
-                }
-                attn_procs[name] = LoRAIPAttnProcessor(
-                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
-                )
-                attn_procs[name].load_state_dict(weights, strict=False)
-        unet.set_attn_processor(attn_procs)
-        ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
-        
-        # Create IP-Adapter wrapper class
-        ip_adapter = IPAdapter(
-            image_proj_model=image_proj_model_ip_adapter,
-            adapter_modules=ip_adapter_modules,
-            ckpt_path=args.pretrained_ip_adapter_path
-        )
+    logger.info("Initializing IP-Adapter components")
+    
+    # Initialize IP-Adapter projection model
+    image_proj_model_ip_adapter = MLPProjModel(
+        cross_attention_dim=unet.config.cross_attention_dim,
+        id_embeddings_dim=args.faceid_embedding_dim,
+        num_tokens=4,
+    )
+    
+    # Initialize IP-Adapter attention processors
+    attn_procs = {}
+    unet_sd = unet.state_dict()
+    for name in unet.attn_processors.keys():
+        cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
+        if name.startswith("mid_block"):
+            hidden_size = unet.config.block_out_channels[-1]
+        elif name.startswith("up_blocks"):
+            block_id = int(name[len("up_blocks.")])
+            hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
+        elif name.startswith("down_blocks"):
+            block_id = int(name[len("down_blocks.")])
+            hidden_size = unet.config.block_out_channels[block_id]
+        if cross_attention_dim is None:
+            attn_procs[name] = LoRAAttnProcessor(
+                hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
+            )
+        else:
+            layer_name = name.split(".processor")[0]
+            weights = {
+                "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
+                "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
+            }
+            attn_procs[name] = LoRAIPAttnProcessor(
+                hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
+            )
+            attn_procs[name].load_state_dict(weights, strict=False)
+    unet.set_attn_processor(attn_procs)
+    ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
+    
+    # Create IP-Adapter wrapper class
+    ip_adapter = IPAdapter(
+        image_proj_model=image_proj_model_ip_adapter,
+        adapter_modules=ip_adapter_modules,
+        ckpt_path=args.pretrained_ip_adapter_path
+    )
 
     # Taken from [Sayak Paul's Diffusers PR #6511](https://github.com/huggingface/diffusers/pull/6511/files)
     def unwrap_model(model):
@@ -1092,7 +1082,7 @@ def main(args):
                     if isinstance(model, ControlNetModel):
                         sub_dir = "controlnet"
                         model.save_pretrained(os.path.join(output_dir, sub_dir))
-                    elif args.enable_ip_adapter and not ip_adapter_saved:
+                    elif not ip_adapter_saved:
                         if isinstance(model, IPAdapter):
                             # Save IP-Adapter components (checkpoint save) to subdirectory
                             unwrapped_ip_adapter = unwrap_model(ip_adapter)
@@ -1118,7 +1108,7 @@ def main(args):
 
                     model.load_state_dict(load_model.state_dict())
                     del load_model
-                elif args.enable_ip_adapter and not ip_adapter_loaded:
+                elif not ip_adapter_loaded:
                     ip_adapter_path = os.path.join(input_dir, "ip_adapter", "ip_adapter.bin")
                     if os.path.exists(ip_adapter_path):
                         unwrapped_ip_adapter = unwrap_model(ip_adapter)
@@ -1132,8 +1122,7 @@ def main(args):
     unet.requires_grad_(False)
     text_encoder.requires_grad_(False)
     controlnet.train()
-    if args.enable_ip_adapter:
-        ip_adapter.train()
+    ip_adapter.train()
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -1187,18 +1176,14 @@ def main(args):
         optimizer_class = torch.optim.AdamW
 
     # Optimizer creation
-    if args.enable_ip_adapter:
-        params_to_optimize = itertools.chain(
-            controlnet.parameters(),
-            ip_adapter.image_proj_model.parameters(),
-            ip_adapter.adapter_modules.parameters()
-        )
-        # Convert to list once (optimizer accepts both list and iterator)
-        params_to_optimize = list(params_to_optimize)
-        logger.info(f"Optimizing ControlNet + IP-Adapter parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
-    else:
-        params_to_optimize = controlnet.parameters()
-        logger.info(f"Optimizing ControlNet parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
+    params_to_optimize = itertools.chain(
+        controlnet.parameters(),
+        ip_adapter.image_proj_model.parameters(),
+        ip_adapter.adapter_modules.parameters()
+    )
+    # Convert to list once (optimizer accepts both list and iterator)
+    params_to_optimize = list(params_to_optimize)
+    logger.info(f"Optimizing ControlNet + IP-Adapter parameters (total: {sum(p.numel() for p in params_to_optimize if p.requires_grad)} trainable params)")
     
     optimizer = optimizer_class(
         params_to_optimize,
@@ -1240,14 +1225,9 @@ def main(args):
     )
 
     # Prepare everything with our `accelerator`.
-    if args.enable_ip_adapter:
-        controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-            controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler
-        )
-    else:
-        controlnet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-            controlnet, optimizer, train_dataloader, lr_scheduler
-        )
+    controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        controlnet, ip_adapter, optimizer, train_dataloader, lr_scheduler
+    )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
@@ -1381,7 +1361,7 @@ def main(args):
                 )
 
                 # ======================= IP-Adapter =========================
-                if args.enable_ip_adapter and "faceid_embeddings" in batch:
+                if "faceid_embeddings" in batch:
                     image_embeds = batch["faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
                     
                     # Apply drop for cfg
@@ -1420,15 +1400,12 @@ def main(args):
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    if args.enable_ip_adapter:
-                        # Clip gradients for both ControlNet and IP-Adapter
-                        params_to_clip = itertools.chain(
-                            controlnet.parameters(),
-                            ip_adapter.image_proj_model.parameters(),
-                            ip_adapter.adapter_modules.parameters()
-                        )
-                    else:
-                        params_to_clip = controlnet.parameters()
+                    # Clip gradients for both ControlNet and IP-Adapter
+                    params_to_clip = itertools.chain(
+                        controlnet.parameters(),
+                        ip_adapter.image_proj_model.parameters(),
+                        ip_adapter.adapter_modules.parameters()
+                    )
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
@@ -1492,14 +1469,13 @@ def main(args):
         controlnet_dir = os.path.join(args.output_dir, "controlnet")
         controlnet.save_pretrained(controlnet_dir)
         
-        # Save IP-Adapter if enabled
-        if args.enable_ip_adapter:
-            ip_adapter_unwrapped = unwrap_model(ip_adapter)
-            ip_adapter_dir = os.path.join(args.output_dir, "ip_adapter")
-            os.makedirs(ip_adapter_dir, exist_ok=True)
-            ip_adapter_path = os.path.join(ip_adapter_dir, "ip_adapter.bin")
-            ip_adapter_unwrapped.save_to_file(ip_adapter_path)
-            logger.info(f"Saved IP-Adapter to {ip_adapter_path}")
+        # Save IP-Adapter
+        ip_adapter_unwrapped = unwrap_model(ip_adapter)
+        ip_adapter_dir = os.path.join(args.output_dir, "ip_adapter")
+        os.makedirs(ip_adapter_dir, exist_ok=True)
+        ip_adapter_path = os.path.join(ip_adapter_dir, "ip_adapter.bin")
+        ip_adapter_unwrapped.save_to_file(ip_adapter_path)
+        logger.info(f"Saved IP-Adapter to {ip_adapter_path}")
 
         # Run a final round of validation.
         image_logs = None
