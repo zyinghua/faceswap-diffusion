@@ -562,7 +562,19 @@ def parse_args(input_args=None):
         "--faceid_embedding_column",
         type=str,
         default="faceid_embedding",
-        help="The column of the dataset containing the faceid embedding pt file path.",
+        help="The column of the dataset containing the target faceid embedding pt file path.",
+    )
+    parser.add_argument(
+        "--source_faceid_embedding_column",
+        type=str,
+        default="source_faceid_embedding",
+        help="The column of the dataset containing the source faceid embedding pt file path.",
+    )
+    parser.add_argument(
+        "--source_caption_column",
+        type=str,
+        default="source_caption",
+        help="The column of the dataset containing the source image caption (for L_id branch).",
     )
     parser.add_argument(
         "--max_train_samples",
@@ -776,11 +788,32 @@ def make_train_dataset(args, tokenizer, accelerator):
                 raise ValueError(
                     f"`--faceid_embedding_column` value '{args.faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
                 )
+    
+        if args.source_faceid_embedding_column is None:
+            source_faceid_embedding_column = column_names[4]
+            logger.info(f"source faceid embedding column defaulting to {source_faceid_embedding_column}")
+        else:
+            source_faceid_embedding_column = args.source_faceid_embedding_column
+            if source_faceid_embedding_column not in column_names:
+                raise ValueError(
+                    f"`--source_faceid_embedding_column` value '{args.source_faceid_embedding_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+                )
+    
+        if args.source_caption_column is None:
+            source_caption_column = column_names[5]
+            logger.info(f"source caption column defaulting to {source_caption_column}")
+        else:
+            source_caption_column = args.source_caption_column
+            if source_caption_column not in column_names:
+                raise ValueError(
+                    f"`--source_caption_column` value '{args.source_caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
+                )
 
-    def tokenize_captions(examples, is_train=True):
+    def tokenize_captions(examples, caption_col, is_train=True, apply_empty_prompt_dropout=True):
+        """Tokenize captions from a specified column."""
         captions = []
-        for caption in examples[caption_column]:
-            if random.random() < args.proportion_empty_prompts:
+        for caption in examples[caption_col]:
+            if apply_empty_prompt_dropout and random.random() < args.proportion_empty_prompts:
                 captions.append("")
             elif isinstance(caption, str):
                 captions.append(caption)
@@ -789,7 +822,7 @@ def make_train_dataset(args, tokenizer, accelerator):
                 captions.append(random.choice(caption) if is_train else caption[0])
             else:
                 raise ValueError(
-                    f"Caption column `{caption_column}` should contain either strings or lists of strings."
+                    f"Caption column `{caption_col}` should contain either strings or lists of strings."
                 )
         inputs = tokenizer(
             captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
@@ -833,9 +866,9 @@ def make_train_dataset(args, tokenizer, accelerator):
 
         examples["pixel_values"] = images
         examples["conditioning_pixel_values"] = conditioning_images
-        examples["input_ids"] = tokenize_captions(examples)
+        examples["input_ids"] = tokenize_captions(examples, caption_column)
 
-        # Load FaceID embeddings for IP-Adapter
+        # Load FaceID embeddings for IP-Adapter (target embeddings)
         if args.enable_ip_adapter:
             faceid_embeddings = []
             drop_image_embeds = []
@@ -849,6 +882,16 @@ def make_train_dataset(args, tokenizer, accelerator):
             
             examples["faceid_embeddings"] = faceid_embeddings
             examples["drop_image_embeds"] = drop_image_embeds
+
+            # Load source FaceID embeddings for face swapping
+            source_faceid_embeddings = []
+            for embed_path in examples[source_faceid_embedding_column]:
+                embed_full_path = Path(args.train_data_dir) / embed_path
+                source_face_id_embed = torch.load(embed_full_path, map_location="cpu")
+                source_faceid_embeddings.append(source_face_id_embed)
+
+            examples["source_faceid_embeddings"] = source_faceid_embeddings
+            examples["source_input_ids"] = tokenize_captions(examples, source_caption_column, apply_empty_prompt_dropout=False)
 
         return examples
 
@@ -876,12 +919,22 @@ def collate_fn(examples):
         "input_ids": input_ids,
     }
 
-    # Add IP-Adapter FaceID embeddings if available
+    # Add IP-Adapter FaceID embeddings if available (target embeddings)
     if "faceid_embeddings" in examples[0]:
         faceid_embeddings = torch.cat([example["faceid_embeddings"] for example in examples], dim=0)
         drop_image_embeds = [example["drop_image_embeds"] for example in examples]
         result["faceid_embeddings"] = faceid_embeddings
         result["drop_image_embeds"] = drop_image_embeds
+
+    # Add source FaceID embeddings
+    if "source_faceid_embeddings" in examples[0]:
+        source_faceid_embeddings = torch.cat([example["source_faceid_embeddings"] for example in examples], dim=0)
+        result["source_faceid_embeddings"] = source_faceid_embeddings
+
+    # Add source caption input_ids for L_id branch
+    if "source_input_ids" in examples[0]:
+        source_input_ids = torch.stack([example["source_input_ids"] for example in examples])
+        result["source_input_ids"] = source_input_ids
 
     return result
 
