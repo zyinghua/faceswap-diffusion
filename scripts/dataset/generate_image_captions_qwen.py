@@ -46,10 +46,10 @@ def caption_face_images_batch(pil_images: list[Image.Image], style: str = "mediu
                             "and their hair style, clothing, accessories, or the background environment. "
                             "Keep the caption brief, typically 5-10 words."
                             "\n\nExamples:"
-                            "\n- 'a woman with long dark hair'"
-                            "\n- 'a man in a suit and tie'"
-                            "\n- 'a baby wearing a knitted bonnet'"
-                            "\n- 'a young girl singing into a microphone'"
+                            "\n- a woman with long dark hair"
+                            "\n- a man in a suit and tie"
+                            "\n- a baby wearing a knitted bonnet"
+                            "\n- a young girl singing into a microphone"
                         ),
                     }
                 ],
@@ -83,10 +83,10 @@ def caption_face_images_batch(pil_images: list[Image.Image], style: str = "mediu
                             "\n2. Attribute must be a major clothing item or accessory (e.g., 'wearing a suit', 'with glasses', 'wearing a red shirt')."
                             "\n3. Output nothing else. No full sentences."
                             "\n\nExample outputs:"
-                            "\n- 'a woman with blonde hair'"
-                            "\n- 'a man in a suit with a tie'"
-                            "\n- 'a girl wearing a hat'"
-                            "\n- 'a woman singing into a microphone'"
+                            "\n- a woman with blonde hair"
+                            "\n- a man in a suit with a tie"
+                            "\n- a girl wearing a hat"
+                            "\n- a woman singing into a microphone"
                         ),
                     }
                 ],
