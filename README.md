@@ -30,7 +30,7 @@ If your compute has enough bandwidth, you may first try: `scripts/download_and_r
 ```bash
 git lfs install
 GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/datasets/zyinghua/ff-celeba-hq-dataset512 # pesudo clone
-cd ffhq-dataset512
+cd ff-celeba-hq-dataset512
 git config lfs.concurrenttransfers 1 # download only 1 file at a time (saves RAM)
 git lfs pull # actual download
 cd .. #go back into the faceswap-diffusion directory
