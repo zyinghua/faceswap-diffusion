@@ -59,7 +59,12 @@ from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 
 from ip_adapter.ip_adapter_faceid import MLPProjModel
-from ip_adapter.attention_processor_faceid import LoRAAttnProcessor, LoRAIPAttnProcessor
+from ip_adapter.utils import is_torch2_available
+
+if is_torch2_available():
+    from ip_adapter.attention_processor import IPAttnProcessor2_0 as IPAttnProcessor, AttnProcessor2_0 as AttnProcessor
+else:
+    from ip_adapter.attention_processor import IPAttnProcessor, AttnProcessor
 
 if is_wandb_available():
     import wandb
@@ -668,12 +673,6 @@ def parse_args(input_args=None):
         help="Dimension of FaceID embeddings. Default is 512.",
     )
     parser.add_argument(
-        "--ip_adapter_lora_rank",
-        type=int,
-        default=128,
-        help="LoRA rank for IP-Adapter FaceID attention processors. Default is 128.",
-    )
-    parser.add_argument(
         "--id_loss_weight",
         type=float,
         default=0.1,
@@ -972,7 +971,7 @@ def one_step_clean_pixel_extraction(model_pred_id, noisy_latents, timesteps, noi
     with torch.no_grad():
         decoded = vae.decode(scaled_latents, return_dict=False)[0]
     
-    pred_x0 = (decoded / 2 + 0.5).clamp(0, 1)
+    pred_x0 = (decoded / 2 + 0.5).clamp(0, 1) # [B, C, H, W]
     #pred_x0 = pred_x0.permute(0, 2, 3, 1)
     
     return pred_x0
@@ -985,7 +984,7 @@ def extract_faceid_embedding(faceid_encoder, pred_x0, device):
     pred_tensor_resized = F.interpolate(pred_x0, size=(112, 112), mode="bilinear", align_corners=False)  # [B, 3, 112, 112]
     
     # Normalize: transform from [0, 1] to [-1, 1]
-    pred_tensor_normalized = pred_tensor_resized * 2 - 1
+    pred_tensor_normalized = pred_tensor_resized * 2 - 1 # [B, C, H, W]
     pred_tensor_normalized = pred_tensor_normalized.to(device)
     
     with torch.no_grad():
@@ -1122,19 +1121,15 @@ def main(args):
             block_id = int(name[len("down_blocks.")])
             hidden_size = unet.config.block_out_channels[block_id]
         if cross_attention_dim is None:
-            attn_procs[name] = LoRAAttnProcessor(
-                hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
-            )
+            attn_procs[name] = AttnProcessor()
         else:
             layer_name = name.split(".processor")[0]
             weights = {
                 "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
                 "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
             }
-            attn_procs[name] = LoRAIPAttnProcessor(
-                hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
-            )
-            attn_procs[name].load_state_dict(weights, strict=False)
+            attn_procs[name] = IPAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
+            attn_procs[name].load_state_dict(weights)
     unet.set_attn_processor(attn_procs)
     ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
     
