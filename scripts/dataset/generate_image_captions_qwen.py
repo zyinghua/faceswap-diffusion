@@ -33,6 +33,36 @@ def caption_face_images_batch(pil_images: list[Image.Image], style: str = "mediu
         List of caption strings, one per image
     """
     messages_templates = {
+        "detailed": [
+            {
+                "role": "system",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "You are an expert face captioner. "
+                            "Describe the face clearly and objectively, "
+                            "including approximate age, perceived gender presentation, "
+                            "hair style and color, expression, and any notable attributes. "
+                            "Start the caption with 'A close-up photo of...' "
+                            "Use one concise sentence and avoid names and guessing identity."
+                        ),
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe this face in one sentence for a training caption."
+                        ),
+                    },
+                ],
+            },
+        ],
         "medium": [
             {
                 "role": "system",

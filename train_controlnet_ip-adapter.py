@@ -58,7 +58,12 @@ from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 
 from ip_adapter.ip_adapter_faceid import MLPProjModel
-from ip_adapter.attention_processor_faceid import LoRAAttnProcessor, LoRAIPAttnProcessor
+from ip_adapter.utils import is_torch2_available
+
+if is_torch2_available():
+    from ip_adapter.attention_processor import IPAttnProcessor2_0 as IPAttnProcessor, AttnProcessor2_0 as AttnProcessor
+else:
+    from ip_adapter.attention_processor import IPAttnProcessor, AttnProcessor
 
 if is_wandb_available():
     import wandb
@@ -995,19 +1000,15 @@ def main(args):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = unet.config.block_out_channels[block_id]
             if cross_attention_dim is None:
-                attn_procs[name] = LoRAAttnProcessor(
-                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
-                )
+                attn_procs[name] = AttnProcessor()
             else:
                 layer_name = name.split(".processor")[0]
                 weights = {
                     "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
                     "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
                 }
-                attn_procs[name] = LoRAIPAttnProcessor(
-                    hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.ip_adapter_lora_rank
-                )
-                attn_procs[name].load_state_dict(weights, strict=False)
+                attn_procs[name] = IPAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
+                attn_procs[name].load_state_dict(weights)
         unet.set_attn_processor(attn_procs)
         ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
         
