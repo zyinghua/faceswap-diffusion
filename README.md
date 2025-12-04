@@ -39,8 +39,6 @@ rm -rf .git # (Optional) You may want to remove the git copy, which breaks git, 
 ```
 
 ## Training
-Please firstly download the `glint360k_r100.pth` for the Face ID encoder from [here](https://cloud.tsinghua.edu.cn/d/962ccd4b243442a3a144/?p=%2Fcheckpoints%2FDiffSwap&mode=list).
-
 You will need to set up training environment config first, please run `accelerate config`, and follow the below setup as default (change as needed based on your specific environment).
 ```bash
 - This machine
@@ -58,3 +56,6 @@ There are two training scripts:
 - `train_controlnet.py` for training solely a ControlNet based on your predefined conditions. `train_controlnet.sh` provides exemplar definition of hyper-parameters.
 - `train_controlnet_ip-adapter.py` for training ControlNet + IP-Adapter, similar style as InstantID.
 - `train.py` for training our face swap model.
+
+Please download the `glint360k_r100.pth` for the Face ID encoder from [here](https://cloud.tsinghua.edu.cn/d/962ccd4b243442a3a144/?p=%2Fcheckpoints%2FDiffSwap&mode=list),
+and put into checkpoints/glint360k_r100.pth by default, or specify `--faceid_encoder_path` for the `train.py` script (for face swap).
