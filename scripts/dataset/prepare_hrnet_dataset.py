@@ -20,9 +20,9 @@ if current_dir not in sys.path:
     sys.path.append(current_dir)
 
 try:
-    from ip_adapter_frozen_encoding_extraction import process_single_image
+    from insightface_app_embedding_extraction import process_single_image
 except ImportError:
-    print("Error: Could not import 'ip_adapter_frozen_encoding_extraction.py'.")
+    print("Error: Could not import 'insightface_app_embedding_extraction.py'.")
     print("Make sure both scripts are in the same directory.")
     sys.exit(1)
 
