@@ -97,9 +97,13 @@ def process_images_recursive(input_dir, output_dir,
 
     # --- Load Captions ---
     print(f"Loading captions from {captions_json}...")
-    with open(captions_json, 'r', encoding='utf-8') as f:
-        captions_dict = json.load(f)
-    print(f"Loaded {len(captions_dict)} captions.")
+    if captions_json:
+        with open(captions_json, 'r', encoding='utf-8') as f:
+            captions_dict = json.load(f)
+        print(f"Loaded {len(captions_dict)} captions.")
+    else:
+        print("No captions JSON provided. Using default caption for all images.")
+        captions_dict = {}
     
     # Gather images
     extensions = {'.jpg', '.jpeg', '.png'}
@@ -144,7 +148,7 @@ def process_images_recursive(input_dir, output_dir,
                 missing_caption_count += 1
                 continue
             
-            current_caption = captions_dict[rel_path_str]
+            current_caption = captions_dict.get(rel_path_str, default_caption) #caption or default if none
             
             # Paths
             original_output = output_path / rel_path
@@ -255,7 +259,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--captions_json", type=str, required=True, help="Path to JSON file with captions")
+    parser.add_argument("--captions_json", type=str, required=False, help="Path to JSON file with captions")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--default_caption", type=str, default="high-quality professional photo of a face")
     parser.add_argument("--faceswap", action="store_true", help="Enable FaceSwap tuple output format")
