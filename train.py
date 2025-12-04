@@ -66,6 +66,12 @@ if is_torch2_available():
 else:
     from ip_adapter.attention_processor import IPAttnProcessor, AttnProcessor
 
+# Import the ID Control Pipeline
+import sys
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(script_dir, "scripts"))
+from pipelines.pipeline_faceswap import StableDiffusionIDControlPipeline
+
 if is_wandb_available():
     import wandb
 
@@ -133,7 +139,7 @@ def image_grid(imgs, rows, cols):
 
 
 def log_validation(
-    vae, text_encoder, tokenizer, unet, controlnet, args, accelerator, weight_dtype, step, is_final_validation=False
+    vae, text_encoder, tokenizer, unet, controlnet, args, accelerator, weight_dtype, step, is_final_validation=False, ip_adapter=None
 ):
     logger.info("Running validation... ")
 
@@ -142,19 +148,31 @@ def log_validation(
     else:
         controlnet = ControlNetModel.from_pretrained(args.output_dir, torch_dtype=weight_dtype)
 
-    pipeline = StableDiffusionControlNetPipeline.from_pretrained(
+    ip_adapter_ckpt_path = None
+    if is_final_validation:
+        ip_adapter_ckpt_path = os.path.join(args.output_dir, "ip_adapter", "ip_adapter.bin")
+
+    pipeline = StableDiffusionIDControlPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
+        controlnet=controlnet,
         vae=vae,
         text_encoder=text_encoder,
         tokenizer=tokenizer,
         unet=unet,
-        controlnet=controlnet,
         safety_checker=None,
+        ip_adapter_ckpt_path=ip_adapter_ckpt_path,
+        faceid_embedding_dim=args.faceid_embedding_dim,
         revision=args.revision,
         variant=args.variant,
         torch_dtype=weight_dtype,
     )
     pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
+    
+    # Override IP-Adapter with trained model for intermediate validation
+    if not is_final_validation and ip_adapter is not None:
+        trained_ip_adapter = accelerator.unwrap_model(ip_adapter)
+        pipeline.ip_adapter = trained_ip_adapter
+    
     pipeline = pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
 
@@ -180,6 +198,13 @@ def log_validation(
             "number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`"
         )
     
+    # Handle FaceID embeddings
+    validation_faceid_embeddings = args.validation_faceid_embedding * len(validation_images) if len(args.validation_faceid_embedding) == 1 else args.validation_faceid_embedding
+    if len(validation_faceid_embeddings) != len(validation_images):
+        raise ValueError(
+            f"Number of FaceID embeddings ({len(validation_faceid_embeddings)}) must match number of validation images ({len(validation_images)})."
+        )
+    
     if args.use_fixed_timestep:
         num_inference_steps = 1
     else:
@@ -188,15 +213,25 @@ def log_validation(
     image_logs = []
     inference_ctx = contextlib.nullcontext() if is_final_validation else torch.autocast("cuda")
 
-    for validation_prompt, validation_image in zip(validation_prompts, validation_images):
+    for idx, (validation_prompt, validation_image) in enumerate(zip(validation_prompts, validation_images)):
         validation_image = Image.open(validation_image).convert("RGB")
 
         images = []
 
+        # Load FaceID embedding
+        faceid_embedding = torch.load(validation_faceid_embeddings[idx], map_location=accelerator.device)
+        faceid_embedding = faceid_embedding.to(dtype=weight_dtype)
+        if faceid_embedding.dim() == 1:
+            faceid_embedding = faceid_embedding.unsqueeze(0)
+
         for _ in range(args.num_validation_images):
             with inference_ctx:
                 image = pipeline(
-                    validation_prompt, validation_image, num_inference_steps=num_inference_steps, generator=generator
+                    prompt=validation_prompt,
+                    image=validation_image,
+                    faceid_embeddings=faceid_embedding,
+                    num_inference_steps=num_inference_steps,
+                    generator=generator,
                 ).images[0]
 
             images.append(image)
@@ -621,6 +656,17 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--validation_faceid_embedding",
+        type=str,
+        default=None,
+        nargs="+",
+        help=(
+            "A set of paths to FaceID embedding .pt files for validation when IP-Adapter is enabled."
+            " Provide either a matching number of `--validation_image`s, a single embedding to be used"
+            " with all validation images, or a single embedding that will be used with all validation images."
+        ),
+    )
+    parser.add_argument(
         "--num_validation_images",
         type=int,
         default=4,
@@ -714,6 +760,27 @@ def parse_args(input_args=None):
             "Must provide either 1 `--validation_image`, 1 `--validation_prompt`,"
             " or the same number of `--validation_prompt`s and `--validation_image`s"
         )
+    
+    # Check that validation_faceid_embedding is provided when validation is enabled
+    if (args.validation_prompt is not None or args.validation_image is not None) and args.validation_faceid_embedding is None:
+        raise ValueError(
+            "`--validation_faceid_embedding` must be provided when using validation. "
+            "ID Control pipeline requires FaceID embeddings for validation."
+        )
+    
+    if args.validation_faceid_embedding is not None:
+        num_validation_items = max(
+            len(args.validation_image) if args.validation_image else 1,
+            len(args.validation_prompt) if args.validation_prompt else 1
+        )
+        if (
+            len(args.validation_faceid_embedding) != 1
+            and len(args.validation_faceid_embedding) != num_validation_items
+        ):
+            raise ValueError(
+                f"Must provide either 1 `--validation_faceid_embedding` or {num_validation_items} "
+                f"(matching the number of validation items)"
+            )
 
     if args.resolution % 8 != 0:
         raise ValueError(
@@ -1583,6 +1650,7 @@ def main(args):
                             accelerator,
                             weight_dtype,
                             global_step,
+                            ip_adapter=ip_adapter,
                         )
 
             logs = {"loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
@@ -1621,6 +1689,7 @@ def main(args):
                 weight_dtype=weight_dtype,
                 step=global_step,
                 is_final_validation=True,
+                ip_adapter=None,
             )
 
         if args.push_to_hub:
