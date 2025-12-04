@@ -39,6 +39,8 @@ rm -rf .git # (Optional) You may want to remove the git copy, which breaks git, 
 ```
 
 ## Training
+Please firstly download the `glint360k_r100.pth` for the Face ID encoder from [here](https://cloud.tsinghua.edu.cn/d/962ccd4b243442a3a144/?p=%2Fcheckpoints%2FDiffSwap&mode=list).
+
 You will need to set up training environment config first, please run `accelerate config`, and follow the below setup as default (change as needed based on your specific environment).
 ```bash
 - This machine
