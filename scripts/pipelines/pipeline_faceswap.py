@@ -167,7 +167,8 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             image_encoder=None,
             requires_safety_checker=requires_safety_checker,
         )
-        
+
+
         self._faceid_embedding_dim = faceid_embedding_dim
         
         image_proj_model = MLPProjModel(
@@ -176,30 +177,43 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             num_tokens=4,
         )
         
-        attn_procs = {}
-        unet_sd = unet.state_dict()
-        for name in unet.attn_processors.keys():
-            cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
-            if name.startswith("mid_block"):
-                hidden_size = unet.config.block_out_channels[-1]
-            elif name.startswith("up_blocks"):
-                block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-            elif name.startswith("down_blocks"):
-                block_id = int(name[len("down_blocks.")])
-                hidden_size = unet.config.block_out_channels[block_id]
-            if cross_attention_dim is None:
-                attn_procs[name] = AttnProcessor()
-            else:
-                layer_name = name.split(".processor")[0]
-                weights = {
-                    "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
-                    "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
-                }
-                attn_procs[name] = IPAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
-                attn_procs[name].load_state_dict(weights)
+        # Check if UNet already has IP-Adapter processors (from training)
+        existing_processors = unet.attn_processors
+        has_ip_adapter_processors = all(
+            isinstance(proc, IPAttnProcessor) for name, proc in existing_processors.items() 
+            if not name.endswith("attn1.processor")
+        )
         
-        unet.set_attn_processor(attn_procs)
+        if not has_ip_adapter_processors:
+            if ip_adapter_ckpt_path is None:
+                raise ValueError("`ip_adapter_ckpt_path` must be provided for StableDiffusionIDControlPipeline. ")
+        
+            # Create new IP-Adapter processors only if UNet doesn't have them
+            attn_procs = {}
+            unet_sd = unet.state_dict()
+            for name in existing_processors.keys():
+                # attn1 = self-attention (no cross_attention_dim), attn2 = cross-attention (has cross_attention_dim)
+                # IP-Adapter only modifies cross-attention layers
+                cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
+                if name.startswith("mid_block"):
+                    hidden_size = unet.config.block_out_channels[-1]
+                elif name.startswith("up_blocks"):
+                    block_id = int(name[len("up_blocks.")])
+                    hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
+                elif name.startswith("down_blocks"):
+                    block_id = int(name[len("down_blocks.")])
+                    hidden_size = unet.config.block_out_channels[block_id]
+                if cross_attention_dim is None:
+                    attn_procs[name] = AttnProcessor()
+                else:
+                    layer_name = name.split(".processor")[0]
+                    weights = {
+                        "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
+                        "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
+                    }
+                    attn_procs[name] = IPAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
+                    attn_procs[name].load_state_dict(weights)
+            unet.set_attn_processor(attn_procs)
         ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
         
         self.ip_adapter = IPAdapter(
