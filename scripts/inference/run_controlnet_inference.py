@@ -19,7 +19,7 @@ OUTPUT_PATH = "./" # path to output dir
 SEED = random.randint(0, 1000000)
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 DTYPE = torch.bfloat16
-NEGATIVE_PROMPT = "noisy, blurry, low contrast, realism, photorealistic, vibrant, colorful, watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured"
+NEGATIVE_PROMPT = "noisy, blurry, low contrast, watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured"
 SAMPLE_NUM = 10
 
 # Guidance parameter (default: 7.5):
