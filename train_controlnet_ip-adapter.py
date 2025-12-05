@@ -742,12 +742,6 @@ def parse_args(input_args=None):
         default=512,
         help="Dimension of FaceID embeddings. Default is 512.",
     )
-    parser.add_argument(
-        "--ip_adapter_lora_rank",
-        type=int,
-        default=128,
-        help="LoRA rank for IP-Adapter FaceID attention processors. Default is 128.",
-    )
 
     if input_args is not None:
         args = parser.parse_args(input_args)
