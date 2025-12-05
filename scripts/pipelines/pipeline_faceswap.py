@@ -132,7 +132,7 @@ class IPAdapter(torch.nn.Module):
     def forward(self, encoder_hidden_states, image_embeds):
         ip_tokens = self.image_proj_model(image_embeds)
         encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)
-        return encoder_hidden_states
+        return encoder_hidden_states, ip_tokens
 
 
 class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
@@ -512,7 +512,7 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             self.do_classifier_free_guidance,
         )
         
-        prompt_embeds = self.ip_adapter(prompt_embeds, faceid_embeddings_prepared)
+        prompt_embeds, ip_tokens = self.ip_adapter(prompt_embeds, faceid_embeddings_prepared)
 
         # 4. Prepare image
         if isinstance(controlnet, ControlNetModel):
@@ -619,10 +619,10 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
                     # Infer ControlNet only for the conditional batch.
                     control_model_input = latents
                     control_model_input = self.scheduler.scale_model_input(control_model_input, t)
-                    controlnet_prompt_embeds = prompt_embeds.chunk(2)[1]
+                    controlnet_prompt_embeds = ip_tokens.chunk(2)[1]
                 else:
                     control_model_input = latent_model_input
-                    controlnet_prompt_embeds = prompt_embeds
+                    controlnet_prompt_embeds = ip_tokens
 
                 if isinstance(controlnet_keep[i], list):
                     cond_scale = [c * s for c, s in zip(controlnet_conditioning_scale, controlnet_keep[i])]
