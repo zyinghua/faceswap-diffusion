@@ -27,7 +27,7 @@ def make_canny_condition(image, canny_detector, low_threshold=100, high_threshol
 
 
 def process_images_recursive(input_dir, output_dir, captions_json, low_threshold=100, high_threshold=200, 
-                            canny_subfolder="canny"):
+                            canny_subfolder="canny", max_samples=None):
     """
     Process 512x512 images and generate Canny edge versions.
     Creates metadata.jsonl in HuggingFace ImageFolder format.
@@ -70,6 +70,11 @@ def process_images_recursive(input_dir, output_dir, captions_json, low_threshold
     
     print(f"Found {len(image_files)} images to process")
     
+    # --- MAX SAMPLES LOGIC ---
+    if max_samples is not None:
+        print(f"Running on first {max_samples} images...")
+        image_files = image_files[:max_samples]
+
     if len(image_files) == 0:
         print(f"No images found in {input_dir}")
         return
@@ -83,6 +88,7 @@ def process_images_recursive(input_dir, output_dir, captions_json, low_threshold
     for img_file in tqdm(image_files, desc="Processing images"):
         try:
             image = Image.open(img_file).convert("RGB")
+            # Calculate relative path (e.g. Part1/00000.png)
             rel_path = img_file.relative_to(input_path)
             rel_path_str = str(rel_path)
             
@@ -93,10 +99,11 @@ def process_images_recursive(input_dir, output_dir, captions_json, low_threshold
             
             caption = captions_dict[rel_path_str]
             
-            # Copy original image to output_dir (required for ImageFolder format)
+            # Copy original image to output_dir
             original_output = output_path / rel_path
             original_output.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(img_file, original_output)
+            if not original_output.exists():
+                shutil.copy2(img_file, original_output)
             
             # Generate and save Canny edge image
             canny_image = make_canny_condition(image, canny_detector, low_threshold, high_threshold)
@@ -104,11 +111,11 @@ def process_images_recursive(input_dir, output_dir, captions_json, low_threshold
             canny_output.parent.mkdir(parents=True, exist_ok=True)
             canny_image.save(canny_output)
             
-            # Create metadata entry (paths relative to output_dir)
+            # Create metadata entry
             metadata_entries.append({
-                "file_name": rel_path_str,  # Original image (HuggingFace creates "image" column from this, always col 0)
+                "file_name": rel_path_str,
                 "text": caption,
-                "conditioning_image": str(Path(canny_subfolder) / rel_path),  # Canny image (should be col 2 for positional fallback)
+                "conditioning_image": str(Path(canny_subfolder) / rel_path),
             })
             
             processed_count += 1
@@ -136,46 +143,14 @@ def process_images_recursive(input_dir, output_dir, captions_json, low_threshold
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Extract Canny edge images and create metadata.jsonl for ControlNet training. "
-                    "Input images must be 512x512 (use resize_images.py first)."
-    )
-    parser.add_argument(
-        "--input_dir",
-        type=str,
-        required=True,
-        help="Directory with 512x512 images (can have subdirectories like Part1/, Part2/, etc.)"
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        required=True,
-        help="Output directory for dataset (will contain original images, canny images, and metadata.jsonl)"
-    )
-    parser.add_argument(
-        "--captions_json",
-        type=str,
-        required=True,
-        help="Path to JSON file containing captions (dict with relative paths like 'Part1/00000.png' as keys)"
-    )
-    parser.add_argument(
-        "--low_threshold",
-        type=int,
-        default=100,
-        help="Canny lower threshold (default: 100)"
-    )
-    parser.add_argument(
-        "--high_threshold",
-        type=int,
-        default=200,
-        help="Canny upper threshold (default: 200)"
-    )
-    parser.add_argument(
-        "--canny_subfolder",
-        type=str,
-        default="canny",
-        help="Subfolder name for canny images (default: 'canny')"
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_dir", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, required=True)
+    parser.add_argument("--captions_json", type=str, required=True)
+    parser.add_argument("--low_threshold", type=int, default=100)
+    parser.add_argument("--high_threshold", type=int, default=200)
+    parser.add_argument("--canny_subfolder", type=str, default="canny")
+    parser.add_argument("--max_samples", type=int, default=None, help="Limit number of images")
     
     args = parser.parse_args()
     
@@ -185,10 +160,10 @@ def main():
         args.captions_json,
         args.low_threshold,
         args.high_threshold,
-        args.canny_subfolder
+        args.canny_subfolder,
+        args.max_samples
     )
 
 
 if __name__ == "__main__":
     main()
-

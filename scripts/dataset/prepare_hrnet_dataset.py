@@ -12,20 +12,10 @@ import torchvision.transforms.functional as TF
 from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
-from insightface.app import FaceAnalysis
 
-# --- IMPORT FROM SIBLING SCRIPT ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
-
-try:
-    from insightface_app_embedding_extraction import process_single_image
-except ImportError:
-    print("Error: Could not import 'insightface_app_embedding_extraction.py'.")
-    print("Make sure both scripts are in the same directory.")
-    sys.exit(1)
-
+# ==========================================
+# 1. Landmark Detector (HRNet)
+# ==========================================
 class HRNetLandmarkDetector:
     def __init__(self, device='cuda'):
         self.device = device
@@ -78,8 +68,17 @@ def draw_landmarks(image_size, landmarks):
 
     return Image.fromarray(canvas)
 
+def get_caption(captions_dict, rel_path_str, filename, default_caption):
+    """Robust caption lookup."""
+    if rel_path_str in captions_dict:
+        return captions_dict[rel_path_str]
+    elif filename in captions_dict:
+        return captions_dict[filename]
+    return default_caption
+
 def process_images_recursive(input_dir, output_dir, 
                              captions_json,
+                             embeddings_dir,
                              landmark_subfolder="landmarks", 
                              embedding_subfolder="embeddings",
                              default_caption="high-quality professional photo of a face", 
@@ -87,6 +86,7 @@ def process_images_recursive(input_dir, output_dir,
                              is_faceswap=False):
     
     input_path = Path(input_dir)
+    embeddings_input_path = Path(embeddings_dir)
     output_path = Path(output_dir)
     landmark_path = output_path / landmark_subfolder
     embed_path = output_path / embedding_subfolder
@@ -100,7 +100,7 @@ def process_images_recursive(input_dir, output_dir,
     with open(captions_json, 'r', encoding='utf-8') as f:
         captions_dict = json.load(f)
     print(f"Loaded {len(captions_dict)} captions.")
-
+    
     # Gather images
     extensions = {'.jpg', '.jpeg', '.png'}
     image_files = []
@@ -116,12 +116,7 @@ def process_images_recursive(input_dir, output_dir,
     # 1. Initialize Landmark Detector
     landmark_detector = HRNetLandmarkDetector()
     
-    # 2. Initialize InsightFace
-    print("Loading InsightFace (AntelopeV2)...")
-    app = FaceAnalysis(name="antelopev2", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-    app.prepare(ctx_id=0, det_size=(640, 640))
-    
-    # 3. Build Identity Map for FaceSwap pairing
+    # 2. Build Identity Map for FaceSwap pairing
     identity_map = {}
     if is_faceswap:
         for img_file in image_files:
@@ -133,20 +128,28 @@ def process_images_recursive(input_dir, output_dir,
     metadata_entries = []
     processed_count = 0
     missing_caption_count = 0
+    missing_embedding_count = 0
     
     for img_file in tqdm(image_files, desc="Processing dataset"):
         try:
+            # Calculate paths relative to input_dir
             rel_path = img_file.relative_to(input_path)
             rel_path_str = str(rel_path)
-
-            # Check for Caption (Skip if missing, like the canny script)
-            if rel_path_str not in captions_dict:
+            
+            # 1. Look up Caption
+            current_caption = get_caption(captions_dict, rel_path_str, img_file.name, None)
+            if current_caption is None:
                 missing_caption_count += 1
                 continue
-            
-            current_caption = captions_dict[rel_path_str]
-            
-            # Paths
+
+            # 2. Look up Input Embedding
+            # Assumes embedding has same relative path but with .pt extension
+            input_embed_file = embeddings_input_path / rel_path.with_suffix('.pt')
+            if not input_embed_file.exists():
+                missing_embedding_count += 1
+                continue
+
+            # Paths for Output
             original_output = output_path / rel_path
             landmark_output = landmark_path / rel_path.with_suffix('.png')
             embed_output = embed_path / rel_path.with_suffix('.pt')
@@ -160,28 +163,28 @@ def process_images_recursive(input_dir, output_dir,
             if not original_output.exists():
                 shutil.copy2(img_file, original_output)
             
-            # --- B. Generate Landmarks (HRNet) ---
-            image = Image.open(img_file).convert("RGB")
-            landmarks = landmark_detector(image)
-            
-            if landmarks is None:
-                continue # Skip if no face for landmarks
+            # --- B. Copy Pre-computed Embedding ---
+            if not embed_output.exists():
+                shutil.copy2(input_embed_file, embed_output)
 
-            landmark_image = draw_landmarks((image.height, image.width), landmarks)
-            landmark_image.save(landmark_output)
-            
-            # --- C. Generate ID Embedding (Using other script) ---
-            success, _ = process_single_image(app, img_file, embed_output)
-            if not success:
-                continue # Skip if InsightFace fails to find a face
+            # --- C. Generate Landmarks (HRNet) ---
+            # Only run if not exists to save time
+            if not landmark_output.exists():
+                image = Image.open(img_file).convert("RGB")
+                landmarks = landmark_detector(image)
+                
+                if landmarks is None:
+                    continue # Skip if no face for landmarks
+
+                landmark_image = draw_landmarks((image.height, image.width), landmarks)
+                landmark_image.save(landmark_output)
 
             # --- D. Metadata Generation ---
-            rel_img_str = str(rel_path)
+            rel_img_str = rel_path_str
             rel_cond_str = str(Path(landmark_subfolder) / rel_path.with_suffix('.png'))
             rel_embed_str = str(Path(embedding_subfolder) / rel_path.with_suffix('.pt'))
             
             if not is_faceswap:
-                # Standard ControlNet Format
                 entry = {
                     "file_name": rel_img_str,
                     "text": current_caption,
@@ -198,39 +201,40 @@ def process_images_recursive(input_dir, output_dir,
                 if len(source_candidates) > 0:
                     source_file = random.choice(source_candidates)
                 else:
-                    # Fallback to self
                     source_file = img_file
                 
-                # Get Source Metadata
+                # Get Source Paths
                 source_rel_path = source_file.relative_to(input_path)
-                source_rel_path_str = str(source_rel_path)
                 
-                # Get Source Caption default_cation
-                source_caption = default_caption
+                # Look up Source Caption
+                source_caption = get_caption(captions_dict, str(source_rel_path), source_file.name, default_caption)
                 
-                # Get Source Embedding Path
+                # Look up Source Embedding Input
+                source_input_embed = embeddings_input_path / source_rel_path.with_suffix('.pt')
+                
+                # Define Source Embedding Output
                 source_embed_output = embed_path / source_rel_path.with_suffix('.pt')
                 
+                # Copy Source Embedding if needed
                 if not source_embed_output.exists():
-                    # Generate it on demand
-                    source_embed_output.parent.mkdir(parents=True, exist_ok=True)
-                    s_success, _ = process_single_image(app, source_file, source_embed_output)
-                    if not s_success:
-                        # If source fails, fallback to target (self) which we know works
+                    if source_input_embed.exists():
+                        source_embed_output.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(source_input_embed, source_embed_output)
+                    else:
+                        # Fallback to target embedding if source missing
+                        source_embed_output = embed_output 
                         source_file = img_file
-                        source_embed_output = embed_output
                         source_caption = current_caption
-                
+
                 source_embed_str = str(Path(embedding_subfolder) / source_file.relative_to(input_path).with_suffix('.pt'))
 
-                # Exact Output Format
                 entry = {
-                    "file_name": rel_img_str,
-                    "text": current_caption,
-                    "conditioning_image": rel_cond_str,
-                    "faceid_embedding": rel_embed_str,
-                    "source_faceid_embedding": source_embed_str,
-                    "source_text": source_caption
+                    "target_img": rel_img_str,
+                    "caption": current_caption,
+                    "target_img_landmarks": rel_cond_str,
+                    "target_img_encoding": rel_embed_str,
+                    "source_img_encoding": source_embed_str,
+                    "source_img_caption": source_caption
                 }
 
             metadata_entries.append(entry)
@@ -249,6 +253,8 @@ def process_images_recursive(input_dir, output_dir,
     print(f"\nProcessed {processed_count} images.")
     if missing_caption_count > 0:
         print(f"Warning: Skipped {missing_caption_count} images due to missing captions.")
+    if missing_embedding_count > 0:
+        print(f"Warning: Skipped {missing_embedding_count} images due to missing pre-computed embeddings.")
     print(f"Saved to {output_path}")
 
 def main():
@@ -256,6 +262,7 @@ def main():
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--captions_json", type=str, required=True, help="Path to JSON file with captions")
+    parser.add_argument("--embeddings_dir", type=str, required=True, help="Path to directory with pre-computed .pt embeddings")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--default_caption", type=str, default="high-quality professional photo of a face")
     parser.add_argument("--faceswap", action="store_true", help="Enable FaceSwap tuple output format")
@@ -266,6 +273,7 @@ def main():
         args.input_dir,
         args.output_dir,
         args.captions_json,
+        args.embeddings_dir,
         default_caption=args.default_caption,
         max_samples=args.max_samples,
         is_faceswap=args.faceswap
