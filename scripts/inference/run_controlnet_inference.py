@@ -2,12 +2,11 @@
 
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from diffusers import StableDiffusionControlNetPipeline, ControlNetModel, UniPCMultistepScheduler
 from diffusers.utils import load_image
 import torch
-import random
 import json
 
 BASE_MODEL = "Manojb/stable-diffusion-2-1-base"
@@ -16,7 +15,7 @@ METADATA_JSONL_PATH = ""  # Path to JSONL file containing prompts (each line sho
 CONTROL_IMAGE = "" # canny image
 NUM_INFERENCE_STEPS = 20
 OUTPUT_PATH = "./" # path to output dir
-SEED = random.randint(0, 1000000)
+SEED = None
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 DTYPE = torch.bfloat16
 NEGATIVE_PROMPT = "noisy, blurry, low contrast, watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured"
@@ -55,7 +54,8 @@ def main():
     pipe = StableDiffusionControlNetPipeline.from_pretrained(
         BASE_MODEL, 
         controlnet=controlnet, 
-        torch_dtype=DTYPE
+        torch_dtype=DTYPE,
+        safety_checker=None,  # Disable safety checker for faster inference
     )
     
     # Speed up diffusion process with faster scheduler and memory optimization
@@ -70,7 +70,12 @@ def main():
     negative_prompts = [NEGATIVE_PROMPT] * SAMPLE_NUM
     
     # Generate image
-    generator = torch.manual_seed(SEED)
+    if SEED is not None:
+        generator = torch.Generator(device="cpu").manual_seed(SEED)
+        print(f"Using seed: {SEED}")
+    else:
+        generator = None
+    
     images = pipe(
         prompts,
         negative_prompt=negative_prompts,
