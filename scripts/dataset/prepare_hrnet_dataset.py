@@ -81,7 +81,8 @@ def process_images_recursive(input_dir, output_dir,
                              embeddings_dir,
                              landmark_subfolder="landmarks", 
                              embedding_subfolder="embeddings",
-                             default_caption="high-quality professional photo of a face", 
+                             source_generic_caption="high-quality close-up photo of a face",
+                             target_generic_caption=None,
                              max_samples=None,
                              is_faceswap=False):
     
@@ -95,11 +96,15 @@ def process_images_recursive(input_dir, output_dir,
     landmark_path.mkdir(parents=True, exist_ok=True)
     embed_path.mkdir(parents=True, exist_ok=True)
 
-    # --- Load Captions ---
-    print(f"Loading captions from {captions_json}...")
-    with open(captions_json, 'r', encoding='utf-8') as f:
-        captions_dict = json.load(f)
-    print(f"Loaded {len(captions_dict)} captions.")
+    # --- Load Captions (only if target_generic_caption is None) ---
+    captions_dict = {}
+    if target_generic_caption is None:
+        print(f"Loading captions from {captions_json}...")
+        with open(captions_json, 'r', encoding='utf-8') as f:
+            captions_dict = json.load(f)
+        print(f"Loaded {len(captions_dict)} captions.")
+    else:
+        print(f"Using target_generic_caption, skipping captions.json")
     
     # Gather images
     extensions = {'.jpg', '.jpeg', '.png'}
@@ -137,10 +142,13 @@ def process_images_recursive(input_dir, output_dir,
             rel_path_str = str(rel_path)
             
             # 1. Look up Caption
-            current_caption = get_caption(captions_dict, rel_path_str, img_file.name, None)
-            if current_caption is None:
-                missing_caption_count += 1
-                continue
+            if target_generic_caption is not None:
+                current_caption = target_generic_caption
+            else:
+                current_caption = get_caption(captions_dict, rel_path_str, img_file.name, None)
+                if current_caption is None:
+                    missing_caption_count += 1
+                    continue
 
             # 2. Look up Input Embedding
             # Assumes embedding has same relative path but with .pt extension
@@ -206,9 +214,6 @@ def process_images_recursive(input_dir, output_dir,
                 # Get Source Paths
                 source_rel_path = source_file.relative_to(input_path)
                 
-                # Look up Source Caption
-                source_caption = get_caption(captions_dict, str(source_rel_path), source_file.name, default_caption)
-                
                 # Look up Source Embedding Input
                 source_input_embed = embeddings_input_path / source_rel_path.with_suffix('.pt')
                 
@@ -224,7 +229,6 @@ def process_images_recursive(input_dir, output_dir,
                         # Fallback to target embedding if source missing
                         source_embed_output = embed_output 
                         source_file = img_file
-                        source_caption = current_caption
 
                 source_embed_str = str(Path(embedding_subfolder) / source_file.relative_to(input_path).with_suffix('.pt'))
 
@@ -234,7 +238,7 @@ def process_images_recursive(input_dir, output_dir,
                     "target_img_landmarks": rel_cond_str,
                     "target_img_encoding": rel_embed_str,
                     "source_img_encoding": source_embed_str,
-                    "source_img_caption": source_caption
+                    "source_img_caption": source_generic_caption
                 }
 
             metadata_entries.append(entry)
@@ -264,7 +268,8 @@ def main():
     parser.add_argument("--captions_json", type=str, required=True, help="Path to JSON file with captions")
     parser.add_argument("--embeddings_dir", type=str, required=True, help="Path to directory with pre-computed .pt embeddings")
     parser.add_argument("--max_samples", type=int, default=None)
-    parser.add_argument("--default_caption", type=str, default="high-quality professional photo of a face")
+    parser.add_argument("--source_generic_caption", type=str, default="high-quality close-up photo of a face")
+    parser.add_argument("--target_generic_caption", type=str, default=None, help="If provided, use this for all target captions and ignore captions.json")
     parser.add_argument("--faceswap", action="store_true", help="Enable FaceSwap tuple output format")
     
     args = parser.parse_args()
@@ -274,7 +279,8 @@ def main():
         args.output_dir,
         args.captions_json,
         args.embeddings_dir,
-        default_caption=args.default_caption,
+        source_generic_caption=args.source_generic_caption,
+        target_generic_caption=args.target_generic_caption,
         max_samples=args.max_samples,
         is_faceswap=args.faceswap
     )
