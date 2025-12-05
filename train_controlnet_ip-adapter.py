@@ -123,7 +123,7 @@ class IPAdapter(torch.nn.Module):
     def forward(self, encoder_hidden_states, image_embeds):
         ip_tokens = self.image_proj_model(image_embeds)
         encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)
-        return encoder_hidden_states
+        return encoder_hidden_states, ip_tokens
 
 
 def image_grid(imgs, rows, cols):
@@ -1408,16 +1408,7 @@ def main(args):
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"], return_dict=False)[0]
-
                 controlnet_image = batch["conditioning_pixel_values"].to(dtype=weight_dtype)
-
-                down_block_res_samples, mid_block_res_sample = controlnet(
-                    noisy_latents,
-                    timesteps,
-                    encoder_hidden_states=encoder_hidden_states,
-                    controlnet_cond=controlnet_image,
-                    return_dict=False,
-                )
 
                 # ======================= IP-Adapter =========================
                 if args.enable_ip_adapter and "faceid_embeddings" in batch:
@@ -1432,9 +1423,18 @@ def main(args):
                             image_embeds_processed.append(image_embed)
                     image_embeds = torch.stack(image_embeds_processed)
                     
-                    # Prepare ip adapter enabled encoder hidden states
-                    encoder_hidden_states = ip_adapter(encoder_hidden_states, image_embeds)
+                    encoder_hidden_states, controlnet_encoder_hidden_states = ip_adapter(encoder_hidden_states, image_embeds)
+                else:
+                    controlnet_encoder_hidden_states = encoder_hidden_states
                 # ======================= IP-Adapter =========================
+
+                down_block_res_samples, mid_block_res_sample = controlnet(
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states=controlnet_encoder_hidden_states,
+                    controlnet_cond=controlnet_image,
+                    return_dict=False,
+                )
                 
                 # Predict the noise residual
                 model_pred = unet(

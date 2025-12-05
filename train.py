@@ -124,7 +124,7 @@ class IPAdapter(torch.nn.Module):
     def forward(self, encoder_hidden_states, image_embeds):
         ip_tokens = self.image_proj_model(image_embeds)
         encoder_hidden_states = torch.cat([encoder_hidden_states, ip_tokens], dim=1)
-        return encoder_hidden_states
+        return encoder_hidden_states, ip_tokens
 
 
 def image_grid(imgs, rows, cols):
@@ -988,28 +988,25 @@ def collate_fn(examples):
 
     input_ids = torch.stack([example["input_ids"] for example in examples])
 
+    # Add IP-Adapter FaceID embeddings (target embeddings)
+    faceid_embeddings = torch.cat([example["faceid_embeddings"] for example in examples], dim=0)
+    drop_image_embeds = [example["drop_image_embeds"] for example in examples]
+
+    # Add source FaceID embeddings
+    source_faceid_embeddings = torch.cat([example["source_faceid_embeddings"] for example in examples], dim=0)
+
+    # Add source caption input_ids for L_id branch
+    source_input_ids = torch.stack([example["source_input_ids"] for example in examples])
+
     result = {
         "pixel_values": pixel_values,
         "conditioning_pixel_values": conditioning_pixel_values,
         "input_ids": input_ids,
+        "faceid_embeddings": faceid_embeddings,
+        "drop_image_embeds": drop_image_embeds,
+        "source_faceid_embeddings": source_faceid_embeddings,
+        "source_input_ids": source_input_ids,
     }
-
-    # Add IP-Adapter FaceID embeddings if available (target embeddings)
-    if "faceid_embeddings" in examples[0]:
-        faceid_embeddings = torch.cat([example["faceid_embeddings"] for example in examples], dim=0)
-        drop_image_embeds = [example["drop_image_embeds"] for example in examples]
-        result["faceid_embeddings"] = faceid_embeddings
-        result["drop_image_embeds"] = drop_image_embeds
-
-    # Add source FaceID embeddings
-    if "source_faceid_embeddings" in examples[0]:
-        source_faceid_embeddings = torch.cat([example["source_faceid_embeddings"] for example in examples], dim=0)
-        result["source_faceid_embeddings"] = source_faceid_embeddings
-
-    # Add source caption input_ids for L_id branch
-    if "source_input_ids" in examples[0]:
-        source_input_ids = torch.stack([example["source_input_ids"] for example in examples])
-        result["source_input_ids"] = source_input_ids
 
     return result
 
@@ -1499,33 +1496,30 @@ def main(args):
 
                 # Get the text embedding for conditioning
                 encoder_hidden_states = text_encoder(batch["input_ids"], return_dict=False)[0]
-
                 controlnet_image = batch["conditioning_pixel_values"].to(dtype=weight_dtype)
+
+                # ======================= IP-Adapter =========================
+                image_embeds = batch["faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
+                
+                # Apply drop for cfg
+                image_embeds_processed = []
+                for image_embed, drop_image_embed in zip(image_embeds, batch["drop_image_embeds"]):
+                    if drop_image_embed == 1:
+                        image_embeds_processed.append(torch.zeros_like(image_embed))
+                    else:
+                        image_embeds_processed.append(image_embed)
+                image_embeds = torch.stack(image_embeds_processed)
+                
+                encoder_hidden_states, controlnet_encoder_hidden_states = ip_adapter(encoder_hidden_states, image_embeds)
+                # ======================= IP-Adapter =========================
 
                 down_block_res_samples, mid_block_res_sample = controlnet(
                     noisy_latents,
                     timesteps,
-                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states=controlnet_encoder_hidden_states,
                     controlnet_cond=controlnet_image,
                     return_dict=False,
                 )
-
-                # ======================= IP-Adapter =========================
-                if "faceid_embeddings" in batch:
-                    image_embeds = batch["faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
-                    
-                    # Apply drop for cfg
-                    image_embeds_processed = []
-                    for image_embed, drop_image_embed in zip(image_embeds, batch["drop_image_embeds"]):
-                        if drop_image_embed == 1:
-                            image_embeds_processed.append(torch.zeros_like(image_embed))
-                        else:
-                            image_embeds_processed.append(image_embed)
-                    image_embeds = torch.stack(image_embeds_processed)
-                    
-                    # Prepare ip adapter enabled encoder hidden states
-                    encoder_hidden_states = ip_adapter(encoder_hidden_states, image_embeds)
-                # ======================= IP-Adapter =========================
                 
                 # Predict the noise residual
                 model_pred = unet(
@@ -1543,31 +1537,29 @@ def main(args):
                 # Second forward pass for identity preservation loss
                 # Uses same target image, noise, timesteps, and landmarks,
                 # but with source faceid embeddings and source caption.
-                model_pred_id = None
-                if "source_faceid_embeddings" in batch and "source_input_ids" in batch:
-                    encoder_hidden_states_id = text_encoder(batch["source_input_ids"], return_dict=False)[0]
-                    
-                    down_block_res_samples_id, mid_block_res_sample_id = controlnet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states=encoder_hidden_states_id,
-                        controlnet_cond=controlnet_image,
-                        return_dict=False,
-                    )
-                    
-                    source_image_embeds = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
-                    encoder_hidden_states_id = ip_adapter(encoder_hidden_states_id, source_image_embeds)
-                    
-                    model_pred_id = unet(
-                        noisy_latents,
-                        timesteps,
-                        encoder_hidden_states=encoder_hidden_states_id,
-                        down_block_additional_residuals=[
-                            sample.to(dtype=weight_dtype) for sample in down_block_res_samples_id
-                        ],
-                        mid_block_additional_residual=mid_block_res_sample_id.to(dtype=weight_dtype),
-                        return_dict=False,
-                    )[0]
+                encoder_hidden_states_id = text_encoder(batch["source_input_ids"], return_dict=False)[0]
+                
+                source_image_embeds = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
+                encoder_hidden_states_id, controlnet_encoder_hidden_states_id = ip_adapter(encoder_hidden_states_id, source_image_embeds)
+                
+                down_block_res_samples_id, mid_block_res_sample_id = controlnet(
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states=controlnet_encoder_hidden_states_id,
+                    controlnet_cond=controlnet_image,
+                    return_dict=False,
+                )
+                
+                model_pred_id = unet(
+                    noisy_latents,
+                    timesteps,
+                    encoder_hidden_states=encoder_hidden_states_id,
+                    down_block_additional_residuals=[
+                        sample.to(dtype=weight_dtype) for sample in down_block_res_samples_id
+                    ],
+                    mid_block_additional_residual=mid_block_res_sample_id.to(dtype=weight_dtype),
+                    return_dict=False,
+                )[0]
                 # ======================= L_id Branch =========================
 
                 # Get the target for loss depending on the prediction type
@@ -1580,23 +1572,22 @@ def main(args):
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                 
                 # Compute L_id loss (identity preservation loss)
-                if model_pred_id is not None:
-                    try:
-                        pred_x0 = one_step_clean_pixel_extraction(
-                            model_pred_id, noisy_latents, timesteps, noise_scheduler, vae, args.use_fixed_timestep
-                        )
-                        
-                        source_faceid_emb = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
-                        loss_id = compute_id_loss(
-                            pred_x0=pred_x0,
-                            source_faceid_embeddings=source_faceid_emb,
-                            faceid_encoder=faceid_encoder,
-                            device=accelerator.device
-                        )
+                try:
+                    pred_x0 = one_step_clean_pixel_extraction(
+                        model_pred_id, noisy_latents, timesteps, noise_scheduler, vae, args.use_fixed_timestep
+                    )
+                    
+                    source_faceid_emb = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
+                    loss_id = compute_id_loss(
+                        pred_x0=pred_x0,
+                        source_faceid_embeddings=source_faceid_emb,
+                        faceid_encoder=faceid_encoder,
+                        device=accelerator.device
+                    )
 
-                        loss += args.id_loss_weight * loss_id
-                    except Exception as e:
-                        logger.warning(f"Skipping L_id loss computation due to error: {e}")
+                    loss += args.id_loss_weight * loss_id
+                except Exception as e:
+                    logger.warning(f"Skipping L_id loss computation due to error: {e}")
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
