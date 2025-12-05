@@ -227,8 +227,10 @@ def log_validation(
     
     if args.use_fixed_timestep:
         num_inference_steps = 1
+        guidance_scale = 0.0
     else:
         num_inference_steps = 20
+        guidance_scale = 7.5
 
     image_logs = []
     inference_ctx = contextlib.nullcontext() if is_final_validation else torch.autocast("cuda")
@@ -254,6 +256,7 @@ def log_validation(
                         image=validation_image,
                         faceid_embeddings=faceid_embedding,
                         num_inference_steps=num_inference_steps,
+                        guidance_scale=guidance_scale,
                         generator=generator,
                     ).images[0]
                 else:
