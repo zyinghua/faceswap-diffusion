@@ -20,3 +20,4 @@ accelerate launch train_controlnet.py \
     --validation_image "/users/erluo/scratch/canny_dataset/canny/Part1/00087.png" "/users/erluo/scratch/canny_dataset/canny/Part1/00000.png" \
     --use_fixed_timestep \
     --report_to="wandb"
+

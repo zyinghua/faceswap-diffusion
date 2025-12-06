@@ -24,3 +24,4 @@ accelerate launch train_controlnet_ip-adapter.py \
     --enable_ip_adapter \
     #--pretrained_ip_adapter_path "/path/to/pretrained_ip_adapter.bin" \
     #--use_fixed_timestep \
+
