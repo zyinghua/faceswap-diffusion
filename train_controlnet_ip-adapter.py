@@ -1125,7 +1125,7 @@ def main(args):
                     elif args.enable_ip_adapter and not ip_adapter_saved:
                         if isinstance(model, IPAdapter):
                             # Save IP-Adapter components (checkpoint save) to subdirectory
-                            unwrapped_ip_adapter = unwrap_model(ip_adapter)
+                            unwrapped_ip_adapter = unwrap_model(model)
                             ip_adapter_dir = os.path.join(output_dir, "ip_adapter")
                             os.makedirs(ip_adapter_dir, exist_ok=True)
                             ip_adapter_path = os.path.join(ip_adapter_dir, "ip_adapter.bin")
@@ -1149,11 +1149,13 @@ def main(args):
                     model.load_state_dict(load_model.state_dict())
                     del load_model
                 elif args.enable_ip_adapter and not ip_adapter_loaded:
-                    ip_adapter_path = os.path.join(input_dir, "ip_adapter", "ip_adapter.bin")
-                    if os.path.exists(ip_adapter_path):
-                        unwrapped_ip_adapter = unwrap_model(ip_adapter)
-                        unwrapped_ip_adapter.load_from_checkpoint(ip_adapter_path)
-                        ip_adapter_loaded = True
+                    if isinstance(model, IPAdapter):
+                        ip_adapter_path = os.path.join(input_dir, "ip_adapter", "ip_adapter.bin")
+                        if os.path.exists(ip_adapter_path):
+                            unwrapped_ip_adapter = unwrap_model(model)
+                            unwrapped_ip_adapter.load_from_checkpoint(ip_adapter_path)
+                            logger.info(f"Loaded IP-Adapter from {ip_adapter_path}")
+                            ip_adapter_loaded = True
 
         accelerator.register_save_state_pre_hook(save_model_hook)
         accelerator.register_load_state_pre_hook(load_model_hook)
@@ -1453,10 +1455,12 @@ def main(args):
                 if accelerator.sync_gradients:
                     if args.enable_ip_adapter:
                         # Clip gradients for both ControlNet and IP-Adapter
+                        # Access nested attributes via .module when wrapped in DDP
+                        ip_adapter_model = ip_adapter.module if hasattr(ip_adapter, 'module') else ip_adapter
                         params_to_clip = itertools.chain(
                             controlnet.parameters(),
-                            ip_adapter.image_proj_model.parameters(),
-                            ip_adapter.adapter_modules.parameters()
+                            ip_adapter_model.image_proj_model.parameters(),
+                            ip_adapter_model.adapter_modules.parameters()
                         )
                     else:
                         params_to_clip = controlnet.parameters()
