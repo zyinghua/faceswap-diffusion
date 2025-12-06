@@ -16,3 +16,4 @@ packaging>=21.0
 onnxruntime-gpu>=1.15.0
 insightface
 pyfacer
+mediapipe
