@@ -149,10 +149,6 @@ def log_validation(
 
     use_ip_adapter_pipeline = args.enable_ip_adapter and args.validation_faceid_embedding is not None
     
-    ip_adapter_ckpt_path = None
-    if use_ip_adapter_pipeline and is_final_validation:
-        ip_adapter_ckpt_path = os.path.join(args.output_dir, "ip_adapter", "ip_adapter.bin")
-
     if use_ip_adapter_pipeline:
         pipeline = StableDiffusionIDControlPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -162,17 +158,18 @@ def log_validation(
             tokenizer=tokenizer,
             unet=unet,
             safety_checker=None,
-            ip_adapter_ckpt_path=ip_adapter_ckpt_path,
-            faceid_embedding_dim=args.faceid_embedding_dim,
             revision=args.revision,
             variant=args.variant,
             torch_dtype=weight_dtype,
         )
         pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
         
-        # Override IP-Adapter with trained model for intermediate validation
-        if not is_final_validation and ip_adapter is not None:
+        if is_final_validation:
+            ip_adapter_ckpt_path = os.path.join(args.output_dir, "ip_adapter", "ip_adapter.bin")
+            pipeline.load_ip_adapter_faceid(ip_adapter_ckpt_path, image_emb_dim=args.faceid_embedding_dim)
+        elif ip_adapter is not None:
             trained_ip_adapter = accelerator.unwrap_model(ip_adapter)
+            pipeline.image_proj_model = trained_ip_adapter.image_proj_model
             pipeline.ip_adapter = trained_ip_adapter
     else:
         pipeline = StableDiffusionControlNetPipeline.from_pretrained(
@@ -1435,7 +1432,7 @@ def main(args):
                 model_pred = unet(
                     noisy_latents,
                     timesteps,
-                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states=encoder_hidden_states.to(dtype=weight_dtype),
                     down_block_additional_residuals=[
                         sample.to(dtype=weight_dtype) for sample in down_block_res_samples
                     ],

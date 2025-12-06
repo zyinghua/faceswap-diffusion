@@ -147,10 +147,8 @@ def log_validation(
         controlnet = accelerator.unwrap_model(controlnet)
     else:
         controlnet = ControlNetModel.from_pretrained(args.output_dir, torch_dtype=weight_dtype)
-
-    ip_adapter_ckpt_path = None
-    if is_final_validation:
         ip_adapter_ckpt_path = os.path.join(args.output_dir, "ip_adapter", "ip_adapter.bin")
+        pipeline.load_ip_adapter_faceid(ip_adapter_ckpt_path, image_emb_dim=args.faceid_embedding_dim)
 
     pipeline = StableDiffusionIDControlPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -160,8 +158,6 @@ def log_validation(
         tokenizer=tokenizer,
         unet=unet,
         safety_checker=None,
-        ip_adapter_ckpt_path=ip_adapter_ckpt_path,
-        faceid_embedding_dim=args.faceid_embedding_dim,
         revision=args.revision,
         variant=args.variant,
         torch_dtype=weight_dtype,
@@ -171,6 +167,7 @@ def log_validation(
     # Override IP-Adapter with trained model for intermediate validation
     if not is_final_validation and ip_adapter is not None:
         trained_ip_adapter = accelerator.unwrap_model(ip_adapter)
+        pipeline.image_proj_model = trained_ip_adapter.image_proj_model
         pipeline.ip_adapter = trained_ip_adapter
     
     pipeline = pipeline.to(accelerator.device)
@@ -1526,7 +1523,7 @@ def main(args):
                 model_pred = unet(
                     noisy_latents,
                     timesteps,
-                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states=encoder_hidden_states.to(dtype=weight_dtype),
                     down_block_additional_residuals=[
                         sample.to(dtype=weight_dtype) for sample in down_block_res_samples
                     ],
@@ -1554,7 +1551,7 @@ def main(args):
                 model_pred_id = unet(
                     noisy_latents,
                     timesteps,
-                    encoder_hidden_states=encoder_hidden_states_id,
+                    encoder_hidden_states=encoder_hidden_states_id.to(dtype=weight_dtype),
                     down_block_additional_residuals=[
                         sample.to(dtype=weight_dtype) for sample in down_block_res_samples_id
                     ],
