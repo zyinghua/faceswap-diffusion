@@ -81,11 +81,12 @@ def main():
     pipe = StableDiffusionIDControlPipeline.from_pretrained(
         BASE_MODEL,
         controlnet=controlnet,
-        ip_adapter_ckpt_path=IP_ADAPTER_PATH,
-        faceid_embedding_dim=FACEID_EMBEDDING_DIM,
         torch_dtype=DTYPE,
         safety_checker=None,  # Disable safety checker for faster inference
     )
+    
+    # Load IP-Adapter
+    pipe.load_ip_adapter_faceid(IP_ADAPTER_PATH, image_emb_dim=FACEID_EMBEDDING_DIM)
     
     # Speed up diffusion process with faster scheduler and memory optimization
     pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)

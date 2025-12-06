@@ -136,62 +136,42 @@ class IPAdapter(torch.nn.Module):
 
 
 class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
-    model_cpu_offload_seq = "text_encoder->image_encoder->unet->vae"
-    _optional_components = ["safety_checker", "feature_extractor", "image_encoder"]
-    _exclude_from_cpu_offload = ["safety_checker"]
-    _callback_tensor_inputs = ["latents", "prompt_embeds", "negative_prompt_embeds", "image"]
 
-    def __init__(
-        self,
-        vae: AutoencoderKL,
-        text_encoder: CLIPTextModel,
-        tokenizer: CLIPTokenizer,
-        unet: UNet2DConditionModel,
-        controlnet: Union[ControlNetModel, List[ControlNetModel], Tuple[ControlNetModel], MultiControlNetModel],
-        scheduler: KarrasDiffusionSchedulers,
-        safety_checker: StableDiffusionSafetyChecker,
-        feature_extractor: CLIPImageProcessor,
-        requires_safety_checker: bool = True,
-        ip_adapter_ckpt_path: Optional[str] = None,
-        faceid_embedding_dim: int = 512,
-    ):
-        super().__init__(
-            vae=vae,
-            text_encoder=text_encoder,
-            tokenizer=tokenizer,
-            unet=unet,
-            controlnet=controlnet,
-            scheduler=scheduler,
-            safety_checker=safety_checker,
-            feature_extractor=feature_extractor,
-            image_encoder=None,
-            requires_safety_checker=requires_safety_checker,
-        )
-
-
-        self._faceid_embedding_dim = faceid_embedding_dim
+    def load_ip_adapter_faceid(self, model_ckpt: str, image_emb_dim: int = 512, num_tokens: int = 4, scale: float = 1.0):
+        self.set_image_proj_model(image_emb_dim, num_tokens)
+        ip_adapter_modules = self.set_ip_adapter(num_tokens, scale)
         
+        self.ip_adapter = IPAdapter(
+            image_proj_model=self.image_proj_model,
+            adapter_modules=ip_adapter_modules,
+            ckpt_path=model_ckpt
+        )
+    
+    def set_image_proj_model(self, image_emb_dim: int = 512, num_tokens: int = 4):
         image_proj_model = MLPProjModel(
-            cross_attention_dim=unet.config.cross_attention_dim,
-            id_embeddings_dim=faceid_embedding_dim,
-            num_tokens=4,
+            cross_attention_dim=self.unet.config.cross_attention_dim,
+            id_embeddings_dim=image_emb_dim,
+            num_tokens=num_tokens,
         )
         
-        # Check if UNet already has IP-Adapter processors (from training)
-        existing_processors = unet.attn_processors
+        image_proj_model.eval()
+        self.image_proj_model = image_proj_model.to(self.unet.device).to(self.unet.dtype)
+        
+        self._faceid_embedding_dim = image_emb_dim
+    
+    def set_ip_adapter(self, num_tokens: int = 4, scale: float = 1.0):
+        # Check if UNet already has IP-Adapter processors (from validation)
         has_ip_adapter_processors = all(
-            isinstance(proc, IPAttnProcessor) for name, proc in existing_processors.items() 
+            isinstance(proc, IPAttnProcessor) for name, proc in self.unet.attn_processors.items() 
             if not name.endswith("attn1.processor")
         )
         
         if not has_ip_adapter_processors:
-            if ip_adapter_ckpt_path is None:
-                raise ValueError("`ip_adapter_ckpt_path` must be provided for StableDiffusionIDControlPipeline. ")
-        
             # Create new IP-Adapter processors only if UNet doesn't have them
+            unet = self.unet
             attn_procs = {}
             unet_sd = unet.state_dict()
-            for name in existing_processors.keys():
+            for name in self.unet.attn_processors.keys():
                 # attn1 = self-attention (no cross_attention_dim), attn2 = cross-attention (has cross_attention_dim)
                 # IP-Adapter only modifies cross-attention layers
                 cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
@@ -204,25 +184,24 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
                     block_id = int(name[len("down_blocks.")])
                     hidden_size = unet.config.block_out_channels[block_id]
                 if cross_attention_dim is None:
-                    attn_procs[name] = AttnProcessor()
+                    attn_procs[name] = AttnProcessor().to(unet.device, dtype=unet.dtype)
                 else:
                     layer_name = name.split(".processor")[0]
                     weights = {
                         "to_k_ip.weight": unet_sd[layer_name + ".to_k.weight"],
                         "to_v_ip.weight": unet_sd[layer_name + ".to_v.weight"],
                     }
-                    attn_procs[name] = IPAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
+                    attn_procs[name] = IPAttnProcessor(
+                        hidden_size=hidden_size, 
+                        cross_attention_dim=cross_attention_dim,
+                        scale=scale,
+                        num_tokens=num_tokens
+                    ).to(unet.device, dtype=unet.dtype)
                     attn_procs[name].load_state_dict(weights)
             unet.set_attn_processor(attn_procs)
-        ip_adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
-        
-        self.ip_adapter = IPAdapter(
-            image_proj_model=image_proj_model,
-            adapter_modules=ip_adapter_modules,
-            ckpt_path=ip_adapter_ckpt_path
-        )
-        
-        self.register_modules(ip_adapter=self.ip_adapter)
+            
+        ip_adapter_modules = torch.nn.ModuleList(self.unet.attn_processors.values())
+        return ip_adapter_modules
     
     def set_ip_adapter_scale(self, scale: float):
         for attn_processor in self.unet.attn_processors.values():
@@ -452,6 +431,8 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             negative_prompt,
             prompt_embeds,
             negative_prompt_embeds,
+            None,
+            None,
             controlnet_conditioning_scale,
             control_guidance_start,
             control_guidance_end,
@@ -511,6 +492,12 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             num_images_per_prompt,
             self.do_classifier_free_guidance,
         )
+        
+        # Check if IP adapter is loaded
+        if not hasattr(self, 'ip_adapter') or self.ip_adapter is None:
+            raise ValueError(
+                "IP-Adapter is not loaded. Please call `load_ip_adapter_faceid()` before using the pipeline."
+            )
         
         prompt_embeds, ip_tokens = self.ip_adapter(prompt_embeds, faceid_embeddings_prepared)
 
