@@ -71,9 +71,9 @@ def main():
                 "canny_path": canny_path
             })
             
-    print(f"Found {len(valid_samples)} valid samples for benchmarking.")
+    print(f"Found {len(valid_samples)} valid samples for prompt ablation.")
 
-    # 3. Run Benchmark
+    # 3. Run Ablation
     models = [
         ("Short", args.ckpt_short),
         ("Medium", args.ckpt_medium),
