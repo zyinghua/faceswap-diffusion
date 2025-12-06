@@ -1410,6 +1410,7 @@ def main(args):
         # tensorboard cannot handle list types for config
         tracker_config.pop("validation_prompt")
         tracker_config.pop("validation_image")
+        tracker_config.pop("validation_faceid_embedding")
 
         accelerator.init_trackers(args.tracker_project_name, config=tracker_config)
 
