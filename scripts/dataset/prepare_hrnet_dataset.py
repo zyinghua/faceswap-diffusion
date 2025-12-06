@@ -265,7 +265,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--captions_json", type=str, required=True, help="Path to JSON file with captions")
+    parser.add_argument("--captions_json", type=str, required=False, help="Path to JSON file with captions")
     parser.add_argument("--embeddings_dir", type=str, required=True, help="Path to directory with pre-computed .pt embeddings")
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--source_generic_caption", type=str, default="high-quality close-up photo of a face")
@@ -273,6 +273,10 @@ def main():
     parser.add_argument("--faceswap", action="store_true", help="Enable FaceSwap tuple output format")
     
     args = parser.parse_args()
+    
+    # Validate: if target_generic_caption is None, captions_json must be provided
+    if args.target_generic_caption is None and args.captions_json is None:
+        parser.error("--captions_json is required when --target_generic_caption is not provided")
     
     process_images_recursive(
         args.input_dir,
