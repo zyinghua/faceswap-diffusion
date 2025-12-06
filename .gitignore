@@ -4,3 +4,5 @@ __pycache__/
 ffhq-dataset512/
 checkpoints/
 .env
+logs/
+wandb/

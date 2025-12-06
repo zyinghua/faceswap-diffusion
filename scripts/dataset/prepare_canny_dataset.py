@@ -26,41 +26,33 @@ def make_canny_condition(image, canny_detector, low_threshold=100, high_threshol
     return Image.fromarray(canny_rgb)
 
 
-def process_images_recursive(input_dir, output_dir, captions_json, low_threshold=100, high_threshold=200, 
+def process_images_recursive(input_dir, output_dir, captions_json, generic_prompt, low_threshold=100, high_threshold=200, 
                             canny_subfolder="canny", max_samples=None):
-    """
-    Process 512x512 images and generate Canny edge versions.
-    Creates metadata.jsonl in HuggingFace ImageFolder format.
     
-    Dataset structure:
-    - output_dir/
-      - Part1/00000.png (original images)
-      - canny/Part1/00000.png (canny images)
-      - metadata.jsonl
-    
-    Args:
-        input_dir: Directory with 512x512 images (use resize_images.py first)
-        output_dir: Output directory for dataset (will contain original + canny images)
-        captions_json: Path to JSON file containing captions (dict with relative paths as keys)
-        low_threshold: Canny lower threshold (default: 100)
-        high_threshold: Canny upper threshold (default: 200)
-        canny_subfolder: Subfolder for canny images (default: "canny")
-    """
     input_path = Path(input_dir)
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    # Load captions from captions_json file
-    captions_file = Path(captions_json)
-    if not captions_file.exists():
-        raise FileNotFoundError(f"Captions file not found: {captions_json}")
+    captions_dict = {}
     
-    try:
-        with open(captions_file, 'r', encoding='utf-8') as f:
-            captions_dict = json.load(f)
-        print(f"Loaded {len(captions_dict)} captions from {captions_file}")
-    except Exception as e:
-        raise ValueError(f"Could not load captions file {captions_json}: {e}")
+    # --- Caption Loading Logic ---
+    if generic_prompt is not None:
+        print(f"Using generic prompt for all images: '{generic_prompt}'")
+    else:
+        # Load captions from JSON if no generic prompt is provided
+        if captions_json is None:
+            raise ValueError("You must provide either --captions_json OR --generic_prompt.")
+            
+        captions_file = Path(captions_json)
+        if not captions_file.exists():
+            raise FileNotFoundError(f"Captions file not found: {captions_json}")
+        
+        try:
+            with open(captions_file, 'r', encoding='utf-8') as f:
+                captions_dict = json.load(f)
+            print(f"Loaded {len(captions_dict)} captions from {captions_file}")
+        except Exception as e:
+            raise ValueError(f"Could not load captions file {captions_json}: {e}")
     
     extensions = {'.jpg', '.jpeg', '.png'}
     image_files = []
@@ -88,16 +80,22 @@ def process_images_recursive(input_dir, output_dir, captions_json, low_threshold
     for img_file in tqdm(image_files, desc="Processing images"):
         try:
             image = Image.open(img_file).convert("RGB")
-            # Calculate relative path (e.g. Part1/00000.png)
             rel_path = img_file.relative_to(input_path)
             rel_path_str = str(rel_path)
             
-            # Skip images without captions
-            if rel_path_str not in captions_dict:
-                missing_caption_count += 1
-                continue
-            
-            caption = captions_dict[rel_path_str]
+            # --- Determine Caption ---
+            if generic_prompt is not None:
+                caption = generic_prompt
+            else:
+                # Lookup in dictionary
+                # Try direct path first, then filename fallback
+                if rel_path_str in captions_dict:
+                    caption = captions_dict[rel_path_str]
+                elif img_file.name in captions_dict:
+                    caption = captions_dict[img_file.name]
+                else:
+                    missing_caption_count += 1
+                    continue
             
             # Copy original image to output_dir
             original_output = output_path / rel_path
@@ -137,16 +135,18 @@ def process_images_recursive(input_dir, output_dir, captions_json, low_threshold
     if missing_caption_count > 0:
         print(f"Warning: {missing_caption_count} images skipped (no caption found in captions file)")
     print(f"Dataset saved to: {output_path}")
-    print(f"  - Original images: {output_path}/")
-    print(f"  - Canny images: {output_path}/{canny_subfolder}/")
-    print(f"  - Metadata: {metadata_file}")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--captions_json", type=str, required=True)
+    
+    # Group: Either captions_json OR generic_prompt
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--captions_json", type=str, help="Path to JSON file containing captions")
+    group.add_argument("--generic_prompt", type=str, help="A single prompt to use for ALL images (ignores json)")
+    
     parser.add_argument("--low_threshold", type=int, default=100)
     parser.add_argument("--high_threshold", type=int, default=200)
     parser.add_argument("--canny_subfolder", type=str, default="canny")
@@ -158,6 +158,7 @@ def main():
         args.input_dir,
         args.output_dir,
         args.captions_json,
+        args.generic_prompt,
         args.low_threshold,
         args.high_threshold,
         args.canny_subfolder,
