@@ -17,3 +17,6 @@ onnxruntime-gpu>=1.15.0
 insightface
 pyfacer
 mediapipe
+ip_adapter
+einops
+safetensors
