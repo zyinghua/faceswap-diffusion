@@ -145,7 +145,8 @@ def log_validation(
     if not is_final_validation:
         controlnet = accelerator.unwrap_model(controlnet)
     else:
-        controlnet = ControlNetModel.from_pretrained(args.output_dir, torch_dtype=weight_dtype)
+        controlnet_dir = os.path.join(args.output_dir, "controlnet")
+        controlnet = ControlNetModel.from_pretrained(controlnet_dir, torch_dtype=weight_dtype)
 
     use_ip_adapter_pipeline = args.enable_ip_adapter and args.validation_faceid_embedding is not None
     
