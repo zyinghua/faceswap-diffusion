@@ -19,6 +19,8 @@ CONTROLNET_PATH = ""  # Path to trained ControlNet (ends with /controlnet)
 IP_ADAPTER_PATH = ""  # Path to IP-Adapter checkpoint (ends with /ip_adapter/ip_adapter.bin)
 FACEID_EMBEDDING_PATH = ""  # Path to FaceID embedding .pt file (source ID face to swap in)
 CONTROL_IMAGE = ""  # landmarks
+MASK_IMAGE = None  # Optional: Path to mask image for inpainting
+IMAGE = None  # Optional: Path to source image for inpainting (required when MASK_IMAGE is provided)
 METADATA_JSONL_PATH = ""  # Optional: Path to JSONL file containing prompts (each line should have "text" and "file_name")
 PROMPT = None  # Text prompt for generation (Override text in metadata if provided)
 NUM_INFERENCE_STEPS = 20
@@ -49,6 +51,15 @@ def main():
     if not CONTROL_IMAGE:
         raise ValueError("CONTROL_IMAGE must be set to the path of the control landmark image")
     
+    # Validate inpainting inputs
+    if MASK_IMAGE:
+        if not IMAGE:
+            raise ValueError("IMAGE must be provided when MASK_IMAGE is provided for inpainting")
+        if not os.path.exists(MASK_IMAGE):
+            raise ValueError(f"MASK_IMAGE path does not exist: {MASK_IMAGE}")
+        if not os.path.exists(IMAGE):
+            raise ValueError(f"IMAGE path does not exist: {IMAGE}")
+    
     # Get prompt from metadata or use provided prompt
     prompt = PROMPT
     if not prompt and METADATA_JSONL_PATH:
@@ -71,6 +82,10 @@ def main():
     print(f"Loading IP-Adapter from: {IP_ADAPTER_PATH}")
     print(f"Loading FaceID embedding from: {FACEID_EMBEDDING_PATH}")
     print(f"Control image: {CONTROL_IMAGE}")
+    if MASK_IMAGE:
+        print(f"Inpainting mode enabled")
+        print(f"  Mask image: {MASK_IMAGE}")
+        print(f"  Source image: {IMAGE}")
     print(f"Prompt: {prompt}")
     print(f"Device: {DEVICE}, Dtype: {DTYPE}")
     
@@ -97,6 +112,13 @@ def main():
     # Load control image
     control_image = load_image(CONTROL_IMAGE)
     
+    # Load mask and source image for inpainting if provided
+    mask_image = None
+    image = None
+    if MASK_IMAGE:
+        mask_image = load_image(MASK_IMAGE)
+        image = load_image(IMAGE)
+    
     # Load FaceID embedding
     faceid_embedding = torch.load(FACEID_EMBEDDING_PATH, map_location="cpu")
     faceid_embedding = faceid_embedding.to(dtype=DTYPE)
@@ -122,17 +144,26 @@ def main():
         generator = None
     
     print(f"Generating {SAMPLE_NUM} image(s)...")
-    images = pipe(
-        prompt=prompts,
-        negative_prompt=negative_prompts,
-        image=control_image,
-        faceid_embeddings=faceid_embedding,
-        num_inference_steps=NUM_INFERENCE_STEPS,
-        generator=generator,
-        guidance_scale=GUIDANCE_SCALE,
-        controlnet_conditioning_scale=CONTROLNET_CONDITIONING_SCALE,
-        ip_adapter_scale=IP_ADAPTER_SCALE,
-    ).images
+    
+    # Prepare pipeline call arguments
+    pipe_kwargs = {
+        "prompt": prompts,
+        "negative_prompt": negative_prompts,
+        "control_image": control_image,
+        "faceid_embeddings": faceid_embedding,
+        "num_inference_steps": NUM_INFERENCE_STEPS,
+        "generator": generator,
+        "guidance_scale": GUIDANCE_SCALE,
+        "controlnet_conditioning_scale": CONTROLNET_CONDITIONING_SCALE,
+        "ip_adapter_scale": IP_ADAPTER_SCALE,
+    }
+    
+    # Add inpainting parameters if mask_image is provided
+    if mask_image is not None:
+        pipe_kwargs["mask_image"] = mask_image
+        pipe_kwargs["image"] = image
+    
+    images = pipe(**pipe_kwargs).images
     
     # Save generated images
     os.makedirs(OUTPUT_PATH, exist_ok=True)
