@@ -1,5 +1,5 @@
 """
-Script for extracting all conditions {mask, Face ID embedding, landmark} from a single image.
+Script for extracting all conditions {mask, Face ID embedding, landmark, caption} from a single image.
 """
 
 import sys
@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import argparse
+import json
 import cv2
 import numpy as np
 import torch
@@ -16,8 +17,22 @@ import torchvision.transforms.functional as TF
 import facer
 from PIL import Image
 import mediapipe as mp
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 
 from scripts.models.iresnet import iresnet100
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
+cache_dir = "/root/autodl-tmp"
+
+qwen_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+    model_name,
+    torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+    device_map="auto",
+    cache_dir=cache_dir,
+)
+qwen_processor = AutoProcessor.from_pretrained(model_name, cache_dir=cache_dir)
 
 
 class FacialMaskExtractor:
@@ -137,6 +152,67 @@ def extract_embedding(model, device, image_path):
     return F.normalize(emb, p=2.0, dim=1)
 
 
+def generate_caption(pil_image):
+    messages = [
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        "You are an expert face captioner. "
+                        "Describe the face clearly and objectively, "
+                        "including approximate age, perceived gender presentation, "
+                        "hair style and color, expression, and any notable attributes. "
+                        "Start the caption with 'A close-up photo of...' "
+                        "Use one sentence and avoid names and guessing identity."
+                    ),
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {
+                    "type": "text",
+                    "text": (
+                        "Describe this face in one sentence for a training caption."
+                    ),
+                },
+            ],
+        },
+    ]
+    
+    text = qwen_processor.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    
+    inputs = qwen_processor(
+        text=text,
+        images=[pil_image],
+        return_tensors="pt",
+    ).to(qwen_model.device)
+    
+    with torch.inference_mode():
+        output_ids = qwen_model.generate(
+            **inputs,
+            max_new_tokens=64,
+            do_sample=False,
+        )
+    
+    generated_ids = output_ids[:, inputs.input_ids.shape[1]:]
+    caption = qwen_processor.batch_decode(
+        generated_ids,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=True,
+    )[0]
+    
+    return caption.strip()
+
+
 def process_image(image_path, output_dir=None, model_path="glint360k_r100.pth"):
     image_path = Path(image_path)
     
@@ -183,9 +259,17 @@ def process_image(image_path, output_dir=None, model_path="glint360k_r100.pth"):
     landmark_path = output_dir / f"{image_path.stem}_landmark.png"
     landmark_image.save(landmark_path)
     
+    print(f"Generating caption...")
+    caption = generate_caption(pil_image)
+    caption_data = {"caption": caption}
+    caption_path = output_dir / f"{image_path.stem}_caption.json"
+    with open(caption_path, 'w', encoding='utf-8') as f:
+        json.dump(caption_data, f, ensure_ascii=False, indent=2)
+    
     print(f"Mask saved to: {mask_path}")
     print(f"Embedding saved to: {embed_path}")
     print(f"Landmark saved to: {landmark_path}")
+    print(f"Caption saved to: {caption_path}")
 
 
 def main():
