@@ -1,14 +1,15 @@
 #!/bin/bash
 
-#export HF_HUB_DISABLE_XET=1
+# source /etc/network_turbo
+# export HF_HUB_DISABLE_XET=1
 
 accelerate launch train_controlnet_ip-adapter.py \
     --pretrained_model_name_or_path "Manojb/stable-diffusion-2-1-base" \
     --conditioning_channels 3 \
-    --train_data_dir "/root/autodl-tmp/ffhq-dataset512-idcontrol" \
-    --output_dir "/root/autodl-tmp/controlnet-model" \
+    --train_data_dir "/root/autodl-tmp/ff-celeba-hq-dataset512-idcontrol" \
+    --output_dir "/root/autodl-tmp/idcontrol-model" \
     --num_train_epochs 1 \
-    --max_train_steps 20000 \
+    --max_train_steps 25000 \
     --resolution 512 \
     --learning_rate 1e-5 \
     --train_batch_size 1 \
@@ -17,8 +18,8 @@ accelerate launch train_controlnet_ip-adapter.py \
     --checkpoints_total_limit 5 \
     --validation_steps 500 \
     --validation_prompt "A close-up photo of a person with light brown hair styled in loose waves, wearing a small earring, and a neutral expression." "A close-up photo of a baby with dark hair, wearing a green striped shirt, lying on a teal surface, looking directly at the camera with a calm expression." \
-    --validation_image "/root/autodl-tmp/ffhq-dataset512-canny/canny/Part1/00087.png" "/root/autodl-tmp/ffhq-dataset512-canny/canny/Part1/00000.png" \
-    --validation_faceid_embedding "/path/to/Part1/00087.pt" "/path/to/Part1/00000.pt" \
+    --validation_image "/root/autodl-tmp/ff-celeba-hq-dataset512-idcontrol/landmarks/Part1/00087.png" "/root/autodl-tmp/ff-celeba-hq-dataset512-idcontrol/landmarks/Part1/00000.png" \
+    --validation_faceid_embedding "/root/autodl-tmp/ff-celeba-hq-dataset512-idcontrol/embeddings/Part1/00087.pt" "/root/autodl-tmp/ff-celeba-hq-dataset512-idcontrol/embeddings/Part1/00000.pt" \
     --faceid_embedding_dim 512 \
     --ip_adapter_image_drop_rate 0.05 \
     --enable_ip_adapter \
