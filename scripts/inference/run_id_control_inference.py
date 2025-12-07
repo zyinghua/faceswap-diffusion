@@ -23,12 +23,12 @@ MASK_IMAGE = None  # Optional: Path to mask image for inpainting
 IMAGE = None  # Optional: Path to source image for inpainting (required when MASK_IMAGE is provided)
 METADATA_JSONL_PATH = ""  # Optional: Path to JSONL file containing prompts (each line should have "text" and "file_name")
 PROMPT = None  # Text prompt for generation (Override text in metadata if provided)
-NUM_INFERENCE_STEPS = 20
+NUM_INFERENCE_STEPS = 50
 OUTPUT_PATH = "./generated_images"  # Path to output dir
 SEED = None
-DTYPE = torch.bfloat16
+DTYPE = torch.float16
 NEGATIVE_PROMPT = "noisy, blurry, low contrast, watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured"
-SAMPLE_NUM = 5  # Number of images to generate
+SAMPLE_NUM = 10  # Number of images to generate
 
 # Guidance parameter (default: 7.5):
 GUIDANCE_SCALE = 7.5
@@ -36,7 +36,7 @@ GUIDANCE_SCALE = 7.5
 CONTROLNET_CONDITIONING_SCALE = 1.0
 FACEID_EMBEDDING_DIM = 512
 # IP-Adapter scale (optional, for controlling strength of face identity)
-IP_ADAPTER_SCALE = None
+IP_ADAPTER_SCALE = None # 0.5 - 1.5
 
 
 def main():
