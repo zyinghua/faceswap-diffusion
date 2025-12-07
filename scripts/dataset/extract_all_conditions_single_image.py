@@ -18,6 +18,7 @@ import facer
 from PIL import Image
 import mediapipe as mp
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+from insightface.app import FaceAnalysis
 
 from scripts.models.iresnet import iresnet100
 
@@ -152,6 +153,33 @@ def extract_embedding(model, device, image_path):
     return F.normalize(emb, p=2.0, dim=1)
 
 
+def extract_embedding_insightface(app, image_path):
+    image = cv2.imread(str(image_path))
+    if image is None:
+        raise ValueError(f"Could not load image: {image_path}")
+    
+    faces = app.get(image)
+    
+    if len(faces) == 0:
+        app.det_model.input_size = (512, 512)
+        faces = app.get(image)
+        
+        if len(faces) == 0:
+            app.det_model.input_size = (320, 320)
+            faces = app.get(image)
+        
+        app.det_model.input_size = (640, 640)
+        
+        if len(faces) == 0:
+            raise ValueError("No faces detected")
+    
+    faces = sorted(faces, key=lambda x: (x.bbox[2]-x.bbox[0]) * (x.bbox[3]-x.bbox[1]), reverse=True)
+    
+    faceid_embeds = torch.from_numpy(faces[0].normed_embedding).unsqueeze(0)
+    
+    return faceid_embeds
+
+
 def generate_caption(pil_image):
     messages = [
         {
@@ -213,7 +241,7 @@ def generate_caption(pil_image):
     return caption.strip()
 
 
-def process_image(image_path, output_dir=None, model_path="glint360k_r100.pth"):
+def process_image(image_path, output_dir=None, model_path="glint360k_r100.pth", use_insightface=False):
     image_path = Path(image_path)
     
     if not image_path.exists():
@@ -241,10 +269,16 @@ def process_image(image_path, output_dir=None, model_path="glint360k_r100.pth"):
     mask_path = output_dir / f"{image_path.stem}_mask.png"
     cv2.imwrite(str(mask_path), mask)
     
-    print(f"Loading iResNet100 model...")
-    iresnet_model, device = load_iresnet_model(model_path)
+    if use_insightface:
+        print(f"Loading InsightFace AntelopeV2...")
+        app = FaceAnalysis(name="antelopev2", providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+        app.prepare(ctx_id=0, det_size=(640, 640))
+        embedding = extract_embedding_insightface(app, image_path)
+    else:
+        print(f"Loading iResNet100 model...")
+        iresnet_model, device = load_iresnet_model(model_path)
+        embedding = extract_embedding(iresnet_model, device, image_path)
     
-    embedding = extract_embedding(iresnet_model, device, image_path)
     embed_path = output_dir / f"{image_path.stem}.pt"
     torch.save(embedding, embed_path)
     
@@ -277,11 +311,12 @@ def main():
     parser.add_argument("--image_path", type=str, required=True)
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--model_path", type=str, default="checkpoints/glint360k_r100.pth")
+    parser.add_argument("--insightface", action="store_true")
     
     args = parser.parse_args()
     
     try:
-        process_image(args.image_path, args.output_dir, args.model_path)
+        process_image(args.image_path, args.output_dir, args.model_path, args.insightface)
     except Exception as e:
         print(f"Error: {e}")
         exit(1)
