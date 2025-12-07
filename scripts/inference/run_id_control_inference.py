@@ -6,6 +6,7 @@ from diffusers import ControlNetModel, UniPCMultistepScheduler
 from diffusers.utils import load_image
 import torch
 import json
+from PIL import Image
 
 # Import the ID Control Pipeline
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +19,7 @@ BASE_MODEL = "Manojb/stable-diffusion-2-1-base"
 CONTROLNET_PATH = ""  # Path to trained ControlNet (ends with /controlnet)
 IP_ADAPTER_PATH = ""  # Path to IP-Adapter checkpoint (ends with /ip_adapter/ip_adapter.bin)
 FACEID_EMBEDDING_PATH = ""  # Path to FaceID embedding .pt file (source ID face to swap in)
-CONTROL_IMAGE = ""  # landmarks
+CONTROL_IMAGE = ""  # control image (e.g., canny edges, landmarks, etc.)
 MASK_IMAGE = None  # Optional: Path to mask image for inpainting
 IMAGE = None  # Optional: Path to source image for inpainting (required when MASK_IMAGE is provided)
 METADATA_JSONL_PATH = ""  # Optional: Path to JSONL file containing prompts (each line should have "text" and "file_name")
@@ -37,6 +38,27 @@ CONTROLNET_CONDITIONING_SCALE = 1.0
 FACEID_EMBEDDING_DIM = 512
 # IP-Adapter scale (optional, for controlling strength of face identity)
 IP_ADAPTER_SCALE = None # 0.5 - 1.5
+
+# Overlay parameters
+ENABLE_CONTROL_IMAGE_OVERLAY = True
+CONTROL_IMAGE_OVERLAY_ALPHA = 0.5
+
+
+def overlay_control_image_on_image(generated_image, control_image, alpha=0.5):
+    """
+    Overlay the control image on top of the generated image.
+    """
+    if generated_image.size != control_image.size:
+        control_image = control_image.resize(generated_image.size, Image.Resampling.LANCZOS)
+    
+    if generated_image.mode != 'RGBA':
+        generated_image = generated_image.convert('RGBA')
+    if control_image.mode != 'RGBA':
+        control_image = control_image.convert('RGBA')
+    
+    overlaid = Image.blend(generated_image, control_image, alpha)
+    
+    return overlaid.convert('RGB')
 
 
 def main():
@@ -171,6 +193,14 @@ def main():
         output_path = os.path.join(OUTPUT_PATH, output_filename)
         image.save(output_path)
         print(f"Saved image to: {output_path}")
+        
+        # Create and save control image overlaid version if overlay is enabled
+        if ENABLE_CONTROL_IMAGE_OVERLAY:
+            overlaid_image = overlay_control_image_on_image(image, control_image, alpha=CONTROL_IMAGE_OVERLAY_ALPHA)
+            overlaid_filename = f"faceswap_output_{i}_with_control_overlay.png"
+            overlaid_path = os.path.join(OUTPUT_PATH, overlaid_filename)
+            overlaid_image.save(overlaid_path)
+            print(f"Saved control image overlaid image to: {overlaid_path}")
     
     print("Inference complete!")
 
