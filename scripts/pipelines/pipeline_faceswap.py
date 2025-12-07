@@ -208,6 +208,60 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             if hasattr(attn_processor, 'scale'):
                 attn_processor.scale = scale
 
+    def check_inputs(
+        self,
+        prompt,
+        image,
+        callback_steps,
+        negative_prompt=None,
+        prompt_embeds=None,
+        negative_prompt_embeds=None,
+        ip_adapter_image=None,
+        ip_adapter_image_embeds=None,
+        controlnet_conditioning_scale=1.0,
+        control_guidance_start=0.0,
+        control_guidance_end=1.0,
+        callback_on_step_end_tensor_inputs=None,
+        faceid_embeddings=None,
+    ):
+        # Call parent class check_inputs
+        super().check_inputs(
+            prompt,
+            image,
+            callback_steps,
+            negative_prompt,
+            prompt_embeds,
+            negative_prompt_embeds,
+            ip_adapter_image,
+            ip_adapter_image_embeds,
+            controlnet_conditioning_scale,
+            control_guidance_start,
+            control_guidance_end,
+            callback_on_step_end_tensor_inputs,
+        )
+        
+        # Validate FaceID embeddings
+        if faceid_embeddings is None:
+            raise ValueError(
+                "`faceid_embeddings` must be provided for StableDiffusionIDControlPipeline. "
+                "Please provide FaceID embeddings as a torch.Tensor."
+            )
+        
+        if not isinstance(faceid_embeddings, torch.Tensor):
+            raise ValueError(f"`faceid_embeddings` must be a torch.Tensor, but got {type(faceid_embeddings)}")
+
+    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.StableDiffusionImg2ImgPipeline.get_timesteps
+    def get_timesteps(self, num_inference_steps, strength, device):
+        # get the original timestep using init_timestep
+        init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
+
+        t_start = max(num_inference_steps - init_timestep, 0)
+        timesteps = self.scheduler.timesteps[t_start * self.scheduler.order :]
+        if hasattr(self.scheduler, "set_begin_index"):
+            self.scheduler.set_begin_index(t_start * self.scheduler.order)
+
+        return timesteps, num_inference_steps - t_start
+
     def prepare_faceid_embeddings(
         self,
         faceid_embeddings: torch.Tensor,
@@ -399,16 +453,6 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
         if ip_adapter_scale is not None:
             self.set_ip_adapter_scale(ip_adapter_scale)
 
-        # Validate FaceID embeddings
-        if faceid_embeddings is None:
-            raise ValueError(
-                "`faceid_embeddings` must be provided for StableDiffusionIDControlPipeline. "
-                "Please provide FaceID embeddings as a torch.Tensor."
-            )
-        
-        if not isinstance(faceid_embeddings, torch.Tensor):
-            raise ValueError(f"`faceid_embeddings` must be a torch.Tensor, but got {type(faceid_embeddings)}")
-
         controlnet = self.controlnet._orig_mod if is_compiled_module(self.controlnet) else self.controlnet
 
         # align format for control guidance
@@ -437,6 +481,7 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             control_guidance_start,
             control_guidance_end,
             callback_on_step_end_tensor_inputs,
+            faceid_embeddings,
         )
 
         self._guidance_scale = guidance_scale
