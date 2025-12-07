@@ -137,7 +137,7 @@ def main():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="glint360k_r100.pth",
+        default="checkpoints/glint360k_r100.pth",
         help="Path to the iResNet100 model weights file (default: glint360k_r100.pth)"
     )
     
