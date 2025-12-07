@@ -719,7 +719,9 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
                 "IP-Adapter is not loaded. Please call `load_ip_adapter_faceid()` before using the pipeline."
             )
         
-        prompt_embeds, ip_tokens = self.ip_adapter(prompt_embeds, faceid_embeddings_prepared)
+        prompt_embeds, ip_tokens = self.ip_adapter(prompt_embeds.to(self.unet.device), faceid_embeddings_prepared.to(self.unet.device))
+        prompt_embeds = prompt_embeds.to(device=device)
+        ip_tokens = ip_tokens.to(device=device)
 
         # 4. Preprocess mask and image for inpainting if mask is provided
         if mask_image is not None:
@@ -847,7 +849,7 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
                 device,
                 generator,
                 latents,
-            )
+            )[0]
 
         # 6.5 Optionally get Guidance Scale Embedding
         timestep_cond = None
