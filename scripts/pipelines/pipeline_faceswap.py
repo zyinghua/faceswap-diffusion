@@ -225,7 +225,7 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
     def check_inputs(
         self,
         prompt,
-        image,
+        control_image,
         callback_steps,
         negative_prompt=None,
         prompt_embeds=None,
@@ -238,11 +238,12 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
         callback_on_step_end_tensor_inputs=None,
         faceid_embeddings=None,
         mask_image=None,
+        image=None,
     ):
         # Call parent class check_inputs
         super().check_inputs(
             prompt,
-            image,
+            control_image,
             callback_steps,
             negative_prompt,
             prompt_embeds,
@@ -268,6 +269,8 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
         if mask_image is not None:
             if self.unet.config.in_channels != 4:
                 raise ValueError(f"Inpainting is only supported for UNet with 4 input channels, but got {self.unet.config.in_channels}. ")
+            if image is None:
+                raise ValueError("`image` must be provided when `mask_image` is provided for inpainting.")
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_img2img.StableDiffusionImg2ImgPipeline.get_timesteps
     def get_timesteps(self, num_inference_steps, strength, device):
@@ -439,9 +442,10 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
     def __call__(
         self,
         prompt: Union[str, List[str]] = None,
-        image: PipelineImageInput = None,
+        control_image: PipelineImageInput = None,
         faceid_embeddings: Optional[torch.Tensor] = None,
         mask_image: Optional[PipelineImageInput] = None,
+        image: Optional[PipelineImageInput] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         num_inference_steps: int = 50,
@@ -478,18 +482,34 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
         Args:
             prompt (`str` or `List[str]`, *optional*):
                 The prompt or prompts to guide image generation. If not defined, you need to pass `prompt_embeds`.
-            image (`torch.Tensor`, `PIL.Image.Image`, `np.ndarray`, `List[torch.Tensor]`, `List[PIL.Image.Image]`, `List[np.ndarray]`,:
+            control_image (`torch.Tensor`, `PIL.Image.Image`, `np.ndarray`, `List[torch.Tensor]`, `List[PIL.Image.Image]`, `List[np.ndarray]`,:
                     `List[List[torch.Tensor]]`, `List[List[np.ndarray]]` or `List[List[PIL.Image.Image]]`):
                 The ControlNet input condition to provide guidance to the `unet` for generation. If the type is
                 specified as `torch.Tensor`, it is passed to ControlNet as is. `PIL.Image.Image` can also be accepted
-                as an image. The dimensions of the output image defaults to `image`'s dimensions. If height and/or
-                width are passed, `image` is resized accordingly. If multiple ControlNets are specified in `init`,
+                as an image. The dimensions of the output image defaults to `control_image`'s dimensions. If height and/or
+                width are passed, `control_image` is resized accordingly. If multiple ControlNets are specified in `init`,
                 images must be passed as a list such that each element of the list can be correctly batched for input
                 to a single ControlNet. When `prompt` is a list, and if a list of images is passed for a single
                 ControlNet, each will be paired with each prompt in the `prompt` list. This also applies to multiple
                 ControlNets, where a list of image lists can be passed to batch for each prompt and each ControlNet.
             faceid_embeddings (`torch.Tensor`):
                 The FaceID embeddings to use for the IP-Adapter.
+            mask_image (`torch.Tensor`, `PIL.Image.Image`, `np.ndarray`, `List[torch.Tensor]`,
+                    `List[PIL.Image.Image]`, or `List[np.ndarray]`):
+                `Image`, NumPy array or tensor representing an image batch to mask `image`. White pixels in the mask
+                are repainted while black pixels are preserved. If `mask_image` is a PIL image, it is converted to a
+                single channel (luminance) before use. If it's a NumPy array or PyTorch tensor, it should contain one
+                color channel (L) instead of 3, so the expected shape for PyTorch tensor would be `(B, 1, H, W)`, `(B,
+                H, W)`, `(1, H, W)`, `(H, W)`. And for NumPy array, it would be for `(B, H, W, 1)`, `(B, H, W)`, `(H,
+                W, 1)`, or `(H, W)`.
+            image (`torch.Tensor`, `PIL.Image.Image`, `np.ndarray`, `List[torch.Tensor]`,
+                    `List[PIL.Image.Image]`, or `List[np.ndarray]`, *optional*):
+                `Image`, NumPy array or tensor representing an image batch to be used as the starting point for inpainting.
+                This is the source image that will be inpainted. Required when `mask_image` is provided. For both
+                NumPy array and PyTorch tensor, the expected value range is between `[0, 1]`. If it's a tensor or a
+                list or tensors, the expected shape should be `(B, C, H, W)` or `(C, H, W)`. If it is a NumPy array or
+                a list of arrays, the expected shape should be `(B, H, W, C)` or `(H, W, C)`. It can also accept image
+                latents as `image`, but if passing latents directly it is not encoded again.
             height (`int`, *optional*, defaults to `self.unet.config.sample_size * self.vae_scale_factor`):
                 The height in pixels of the generated image.
             width (`int`, *optional*, defaults to `self.unet.config.sample_size * self.vae_scale_factor`):
@@ -623,7 +643,7 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
             prompt,
-            image,
+            control_image,
             callback_steps,
             negative_prompt,
             prompt_embeds,
@@ -636,6 +656,7 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             callback_on_step_end_tensor_inputs,
             faceid_embeddings,
             mask_image,
+            image,
         )
 
         self._guidance_scale = guidance_scale
@@ -702,8 +723,6 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
 
         # 4. Preprocess mask and image for inpainting if mask is provided
         if mask_image is not None:
-            if image is None:
-                raise ValueError("`image` must be provided when `mask_image` is provided for inpainting.")
             original_image = image
             init_image = self.image_processor.preprocess(
                 image, height=height, width=width
@@ -720,7 +739,7 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
         # 4.1 Prepare control image
         if isinstance(controlnet, ControlNetModel):
             control_image = self.prepare_image(
-                image=image,
+                image=control_image,
                 width=width,
                 height=height,
                 batch_size=batch_size * num_images_per_prompt,
@@ -736,13 +755,13 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             control_images_list = []
 
             # Nested lists as ControlNet condition
-            if isinstance(image[0], list):
+            if isinstance(control_image[0], list):
                 # Transpose the nested image list
-                image = [list(t) for t in zip(*image)]
+                control_image = [list(t) for t in zip(*control_image)]
 
-            for image_ in image:
-                image_ = self.prepare_image(
-                    image=image_,
+            for control_image_ in control_image:
+                control_image_ = self.prepare_image(
+                    image=control_image_,
                     width=width,
                     height=height,
                     batch_size=batch_size * num_images_per_prompt,
@@ -753,7 +772,7 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
                     guess_mode=guess_mode,
                 )
 
-                control_images_list.append(image_)
+                control_images_list.append(control_image_)
 
             control_image = control_images_list
             if mask_image is None:
