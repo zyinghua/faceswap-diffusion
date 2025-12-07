@@ -24,12 +24,11 @@ IMAGE = None  # Optional: Path to source image for inpainting (required when MAS
 METADATA_JSONL_PATH = ""  # Optional: Path to JSONL file containing prompts (each line should have "text" and "file_name")
 PROMPT = None  # Text prompt for generation (Override text in metadata if provided)
 NUM_INFERENCE_STEPS = 20
-OUTPUT_PATH = "./"  # Path to output dir
+OUTPUT_PATH = "./generated_images"  # Path to output dir
 SEED = None
-DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 DTYPE = torch.bfloat16
 NEGATIVE_PROMPT = "noisy, blurry, low contrast, watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured"
-SAMPLE_NUM = 1  # Number of images to generate
+SAMPLE_NUM = 5  # Number of images to generate
 
 # Guidance parameter (default: 7.5):
 GUIDANCE_SCALE = 7.5
@@ -87,7 +86,7 @@ def main():
         print(f"  Mask image: {MASK_IMAGE}")
         print(f"  Source image: {IMAGE}")
     print(f"Prompt: {prompt}")
-    print(f"Device: {DEVICE}, Dtype: {DTYPE}")
+    print(f"Dtype: {DTYPE}")
     
     # Load ControlNet
     controlnet = ControlNetModel.from_pretrained(CONTROLNET_PATH, torch_dtype=DTYPE)
