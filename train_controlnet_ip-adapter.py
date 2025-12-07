@@ -251,7 +251,7 @@ def log_validation(
                 if use_ip_adapter_pipeline:
                     image = pipeline(
                         prompt=validation_prompt,
-                        image=validation_image,
+                        control_image=validation_image,
                         faceid_embeddings=faceid_embedding,
                         num_inference_steps=num_inference_steps,
                         guidance_scale=guidance_scale,
@@ -932,7 +932,12 @@ def make_train_dataset(args, tokenizer, accelerator):
                 drop_image_embed = 1 if random.random() < args.ip_adapter_image_drop_rate else 0
                 drop_image_embeds.append(drop_image_embed)
                 embed_full_path = Path(args.train_data_dir) / embed_path
-                face_id_embed = torch.load(embed_full_path, map_location="cpu")
+                
+                if embed_full_path.exists():
+                    face_id_embed = torch.load(embed_full_path, map_location="cpu")
+                else:
+                    face_id_embed = torch.zeros(1, args.faceid_embedding_dim)
+                    
                 faceid_embeddings.append(face_id_embed)
             
             examples["faceid_embeddings"] = faceid_embeddings

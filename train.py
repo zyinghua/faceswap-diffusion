@@ -228,7 +228,7 @@ def log_validation(
             with inference_ctx:
                 image = pipeline(
                     prompt=validation_prompt,
-                    image=validation_image,
+                    control_image=validation_image,
                     faceid_embeddings=faceid_embedding,
                     num_inference_steps=num_inference_steps,
                     guidance_scale=guidance_scale,
