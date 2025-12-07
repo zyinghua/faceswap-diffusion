@@ -32,9 +32,16 @@ def process_single_image(app, image_path, output_path):
         return False, "Failed to load image"
     
     if len(faces) == 0:
-        # print("Trying with smaller detection size")
+        # Try with smaller detection size (512x512)
         app.det_model.input_size = (512, 512)
         faces = get_face_embedding(app, image_path)
+        
+        if len(faces) == 0:
+            # Try with even smaller detection size (320x320)
+            app.det_model.input_size = (320, 320)
+            faces = get_face_embedding(app, image_path)
+        
+        # Reset to default size
         app.det_model.input_size = (640, 640)
         
         if len(faces) == 0:
