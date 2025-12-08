@@ -9,10 +9,10 @@ accelerate launch train_controlnet_ip-adapter.py \
     --train_data_dir "/root/autodl-tmp/ff-celeba-hq-dataset512-idcontrol" \
     --output_dir "/root/autodl-tmp/idcontrol-model" \
     --num_train_epochs 1 \
-    --max_train_steps 25000 \
+    --max_train_steps 100000 \
     --resolution 512 \
     --learning_rate 1e-5 \
-    --train_batch_size 1 \
+    --train_batch_size 2 \
     --gradient_accumulation_steps 1 \
     --checkpointing_steps 5000 \
     --checkpoints_total_limit 5 \
