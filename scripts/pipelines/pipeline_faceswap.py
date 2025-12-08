@@ -637,7 +637,7 @@ class StableDiffusionIDControlPipeline(StableDiffusionControlNetPipeline):
             if not hasattr(self, 'vae_scale_factor'):
                 self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1) if getattr(self, "vae", None) else 8
             self.mask_processor = VaeImageProcessor(
-                vae_scale_factor=self.vae_scale_factor, do_normalize=False, do_binarize=True, do_convert_grayscale=True
+                vae_scale_factor=self.vae_scale_factor, do_normalize=False, do_binarize=False, do_convert_grayscale=True
             )
 
         # 1. Check inputs. Raise error if not correct
