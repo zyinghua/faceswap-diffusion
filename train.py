@@ -148,8 +148,6 @@ def log_validation(
     else:
         controlnet_dir = os.path.join(args.output_dir, "controlnet")
         controlnet = ControlNetModel.from_pretrained(controlnet_dir, torch_dtype=weight_dtype)
-        ip_adapter_ckpt_path = os.path.join(args.output_dir, "ip_adapter", "ip_adapter.bin")
-        pipeline.load_ip_adapter_faceid(ip_adapter_ckpt_path, image_emb_dim=args.faceid_embedding_dim)
 
     pipeline = StableDiffusionIDControlPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
@@ -170,6 +168,10 @@ def log_validation(
         trained_ip_adapter = accelerator.unwrap_model(ip_adapter)
         pipeline.image_proj_model = trained_ip_adapter.image_proj_model
         pipeline.ip_adapter = trained_ip_adapter
+    elif is_final_validation:
+        # Load IP-Adapter from checkpoint for final validation
+        ip_adapter_ckpt_path = os.path.join(args.output_dir, "ip_adapter", "ip_adapter.bin")
+        pipeline.load_ip_adapter_faceid(ip_adapter_ckpt_path, image_emb_dim=args.faceid_embedding_dim)
     
     pipeline = pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
