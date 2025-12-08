@@ -8,7 +8,6 @@ from pathlib import Path
 from datetime import datetime
 
 try:
-    from compute_expression_preservation import compute_expression_l2_distance, normalize_landmarks
     from compute_id_similarity import IDSimilarityCalculator
     from compute_fid import compute_metrics
     from compute_id_retrieval import calculate_retrieval_accuracy
@@ -19,75 +18,6 @@ except ImportError:
 import cv2
 from tqdm import tqdm
 from insightface.app import FaceAnalysis
-
-def run_expression_preservation(args, app):
-    """Run expression preservation metric using landmarks"""
-    print("Metric 1: Computing Expression Preservation (InsightFace landmarks)")
-    
-    with open(args.pairs_json) as f:
-        pairs = json.load(f)
-    
-    distances = []
-    failed = 0
-    
-    EXPRESSION_INDICES = [0, 1, 3, 4]  # eyes and mouth
-    
-    for target_name, swapped_name in tqdm(pairs.items(), desc="Expression L2"):
-        target_path = Path(args.target_dir) / target_name
-        swapped_path = Path(args.swapped_dir) / swapped_name
-        
-        if not target_path.exists() or not swapped_path.exists():
-            failed += 1
-            continue
-        
-        target_img = cv2.imread(str(target_path))
-        swapped_img = cv2.imread(str(swapped_path))
-        
-        if target_img is None or swapped_img is None:
-            failed += 1
-            continue
-        
-        try:
-            faces_target = app.get(target_img)
-            faces_swapped = app.get(swapped_img)
-            
-            if len(faces_target) == 0 or len(faces_swapped) == 0:
-                failed += 1
-                continue
-            
-            lm_target = faces_target[0].kps
-            lm_swapped = faces_swapped[0].kps
-            
-            lm_target = normalize_landmarks(lm_target, faces_target[0].bbox)
-            lm_swapped = normalize_landmarks(lm_swapped, faces_swapped[0].bbox)
-
-            l2_dist = compute_expression_l2_distance(
-                lm_target, lm_swapped, EXPRESSION_INDICES
-            )
-            distances.append(l2_dist)
-            
-        except Exception:
-            failed += 1
-    
-    if distances:
-        result = {
-            'mean_l2_distance': float(np.mean(distances)),
-            'std_l2_distance': float(np.std(distances)),
-            'median_l2_distance': float(np.median(distances)),
-            'min_l2_distance': float(np.min(distances)),
-            'max_l2_distance': float(np.max(distances)),
-            'total_pairs': len(distances),
-            'failed_pairs': failed
-        }
-        print(f"Mean L2 Distance: {result['mean_l2_distance']:.4f}")
-        print(f"Median L2: {result['median_l2_distance']:.4f}")
-        print(f"Success: {len(distances)}/{len(pairs)}")
-    else:
-        result = {'error': 'No valid measurements', 'failed_pairs': failed}
-        print(f"All pairs failed")
-    
-    return result
-
 
 def run_id_similarity(args):
     """Run ID similarity metric using ArcFace"""
@@ -250,14 +180,7 @@ def main():
         }
     }
     
-    app = FaceAnalysis(
-        name='antelopev2',
-        providers=['CUDAExecutionProvider'] if args.gpu >= 0 else ['CPUExecutionProvider']
-    )
-    app.prepare(ctx_id=args.gpu if args.gpu >= 0 else -1, det_size=(640, 640))
-    
     # run metrics
-    results['expression_preservation'] = run_expression_preservation(args, app)
     results['id_similarity'] = run_id_similarity(args)
     results['id_retrieval'] = run_id_retrieval(args)
     results['quality_metrics'] = run_fid(args)
@@ -271,11 +194,6 @@ def main():
 
     print("Finished eval script")
     print(f"\nResults saved to: {output_path}")
-    
-    # Expression
-    if 'mean_l2_distance' in results['expression_preservation']:
-        exp = results['expression_preservation']
-        print(f"Expression Preservation (L2):  {exp['mean_l2_distance']:.4f}")
     
     # ID Similarity
     if 'mean' in results['id_similarity']:
