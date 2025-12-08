@@ -6,3 +6,5 @@ checkpoints/
 .env
 logs/
 wandb/
+ff-celeba-hq-dataset512/
+assets/
