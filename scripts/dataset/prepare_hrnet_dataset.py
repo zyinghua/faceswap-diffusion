@@ -110,7 +110,14 @@ def process_images_recursive(input_dir, output_dir,
     extensions = {'.jpg', '.jpeg', '.png'}
     image_files = []
     for ext in extensions:
-        image_files.extend(input_path.rglob(f'*{ext}'))
+        all_files = input_path.rglob(f'*{ext}')
+        # Filter to only include files in input_dir/Part{*} directories
+        for img_file in all_files:
+            parts = img_file.parts
+            if 'landmarks' in parts:
+                continue
+            if any(part.startswith('Part') for part in parts):
+                image_files.append(img_file)
     
     print(f"Found {len(image_files)} images total.")
     
@@ -118,8 +125,16 @@ def process_images_recursive(input_dir, output_dir,
         print(f"Running on first {max_samples} images for inspection...")
         image_files = image_files[:max_samples]
     
-    # 1. Initialize Landmark Detector
-    landmark_detector = HRNetLandmarkDetector()
+    # Check if input_dir/landmarks exists
+    input_landmarks_path = input_path / "landmarks"
+    use_existing_landmarks = input_landmarks_path.exists()
+    
+    # 1. Initialize Landmark Detector (only if we need to generate landmarks)
+    landmark_detector = None
+    if not use_existing_landmarks:
+        landmark_detector = HRNetLandmarkDetector()
+    else:
+        print(f"Found existing landmarks directory at {input_landmarks_path}, will use existing landmark images.")
     
     # 2. Build Identity Map for FaceSwap pairing
     identity_map = {}
@@ -178,14 +193,24 @@ def process_images_recursive(input_dir, output_dir,
             # --- C. Generate Landmarks (HRNet) ---
             # Only run if not exists to save time
             if not landmark_output.exists():
-                image = Image.open(img_file).convert("RGB")
-                landmarks = landmark_detector(image)
-                
-                if landmarks is None:
-                    continue # Skip if no face for landmarks
+                if use_existing_landmarks:
+                    # Use existing landmark from input_dir/landmarks
+                    input_landmark_file = input_landmarks_path / rel_path.with_suffix('.png')
+                    if input_landmark_file.exists():
+                        shutil.copy2(input_landmark_file, landmark_output)
+                    else:
+                        print(f"Warning: Expected landmark not found at {input_landmark_file}, skipping...")
+                        continue
+                else:
+                    # Generate landmarks using HRNet
+                    image = Image.open(img_file).convert("RGB")
+                    landmarks = landmark_detector(image)
+                    
+                    if landmarks is None:
+                        continue # Skip if no face for landmarks
 
-                landmark_image = draw_landmarks((image.height, image.width), landmarks)
-                landmark_image.save(landmark_output)
+                    landmark_image = draw_landmarks((image.height, image.width), landmarks)
+                    landmark_image.save(landmark_output)
 
             # --- D. Metadata Generation ---
             rel_img_str = rel_path_str
@@ -233,12 +258,12 @@ def process_images_recursive(input_dir, output_dir,
                 source_embed_str = str(Path(embedding_subfolder) / source_file.relative_to(input_path).with_suffix('.pt'))
 
                 entry = {
-                    "target_img": rel_img_str,
-                    "caption": current_caption,
-                    "target_img_landmarks": rel_cond_str,
-                    "target_img_encoding": rel_embed_str,
-                    "source_img_encoding": source_embed_str,
-                    "source_img_caption": source_generic_caption
+                    "file_name": rel_img_str,
+                    "text": current_caption,
+                    "conditioning_image": rel_cond_str,
+                    "faceid_embedding": rel_embed_str
+                    "source_faceid_embedding": source_embed_str,
+                    "source_text": source_generic_caption
                 }
 
             metadata_entries.append(entry)
