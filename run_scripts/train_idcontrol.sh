@@ -15,7 +15,7 @@ accelerate launch train_controlnet_ip-adapter.py \
     --train_batch_size 2 \
     --gradient_accumulation_steps 1 \
     --checkpointing_steps 5000 \
-    --checkpoints_total_limit 5 \
+    --checkpoints_total_limit 20 \
     --validation_steps 500 \
     --validation_prompt "A close-up photo of a person with light brown hair styled in loose waves, wearing a small earring, and a neutral expression." "A close-up photo of a baby with dark hair, wearing a green striped shirt, lying on a teal surface, looking directly at the camera with a calm expression." \
     --validation_image "/root/autodl-tmp/ff-celeba-hq-dataset512-idcontrol/landmarks/Part1/00087.png" "/root/autodl-tmp/ff-celeba-hq-dataset512-idcontrol/landmarks/Part1/00000.png" \
