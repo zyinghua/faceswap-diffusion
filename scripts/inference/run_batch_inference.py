@@ -15,15 +15,18 @@ from diffusers.utils import load_image
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from scripts.pipelines.pipeline_faceswap_inpaint import StableDiffusionIDControlInpaintPipeline
 
-# Import your condition extractors
+# Import extractors
 try:
+    # Import FaceID and Landmark logic from the single image extractor
     from scripts.dataset.extract_all_conditions_single_image import (
         load_iresnet_model, extract_embedding, 
-        HRNetLandmarkDetector, draw_landmarks, 
-        FacialMaskExtractor
+        HRNetLandmarkDetector, draw_landmarks
     )
-except ImportError:
-    print("Could not import extractors. Make sure extract_all_conditions_single_image.py exists.")
+    # Import the NEW Mask Logic from the dedicated script
+    from scripts.dataset.extract_facial_mask import FacialMaskExtractor
+except ImportError as e:
+    print(f"Import Error: {e}")
+    print("Make sure scripts/dataset/extract_facial_mask.py and scripts/dataset/extract_all_conditions_single_image.py exist.")
     sys.exit(1)
 
 # --- CONFIGURATION ---
@@ -47,7 +50,10 @@ def run_batch(args):
     print("--- Loading Extractor Models ---")
     iresnet, iresnet_device = load_iresnet_model(args.faceid_encoder_path)
     landmark_detector = HRNetLandmarkDetector()
-    mask_extractor = FacialMaskExtractor()
+    
+    # Initialize with the NEW dilated logic
+    print("--- Initializing FacialMaskExtractor(dilated=True) ---")
+    mask_extractor = FacialMaskExtractor(dilated=True)
 
     # 3. Load Config
     with open(args.config_json, 'r') as f:
@@ -69,13 +75,11 @@ def run_batch(args):
             if save_path.exists(): continue # Skip if already done
 
             # --- A. Get FaceID Embedding (Lazy Load) ---
-            # Look for source.pt
             src_embed_path = src_path.with_suffix('.pt')
             
             if src_embed_path.exists():
                 faceid_embed = torch.load(src_embed_path, map_location="cpu").to(dtype=DTYPE)
             else:
-                # Extract and Save
                 faceid_embed = extract_embedding(iresnet, iresnet_device, str(src_path)).to(dtype=DTYPE)
                 torch.save(faceid_embed.cpu(), src_embed_path)
 
@@ -96,20 +100,18 @@ def run_batch(args):
                 control_image = draw_landmarks((512, 512), landmarks)
                 control_image.save(landmark_path)
 
-            # --- D. Get Mask (Lazy Load) ---
+            # --- D. Get Mask (Lazy Load with NEW LOGIC) ---
             mask_path = tgt_path.parent / (tgt_path.stem + "_mask.png")
             
             if mask_path.exists():
                 mask_pil = load_image(str(mask_path)).resize((512, 512))
             else:
+                # The extractor now handles dilation internally
                 mask = mask_extractor.extract_mask(tgt_cv2)
                 if mask is None:
                     print(f"Skip {out_name}: No face for mask")
                     continue
                 
-                # Dilate Mask (The Fix for seams)
-                kernel = np.ones((20, 20), np.uint8)
-                mask = cv2.dilate(mask, kernel, iterations=1)
                 mask_pil = Image.fromarray(mask).convert("L")
                 mask_pil.save(mask_path)
 
