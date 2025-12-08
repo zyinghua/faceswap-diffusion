@@ -1580,7 +1580,7 @@ def main(args):
                     
                     source_faceid_emb = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
                     loss_id = compute_id_loss(
-                        pred_x0=pred_x0,
+                        pred_x0=pred_x0.float(),
                         source_faceid_embeddings=source_faceid_emb,
                         faceid_encoder=faceid_encoder,
                         device=accelerator.device
