@@ -305,7 +305,7 @@ def main():
         "--style",
         type=str,
         default="medium",
-        choices=["medium", "short"],
+        choices=["detailed", "medium", "short"],
         help="Caption style"
     )
     
