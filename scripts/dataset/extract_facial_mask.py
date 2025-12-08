@@ -9,7 +9,7 @@ from tqdm import tqdm
 class FacialMaskExtractor:
     """Extracts facial masks from images using MediaPipe Face Mesh."""
     
-    def __init__(self):
+    def __init__(self, dilated=False):
         """Initialize MediaPipe Face Mesh model."""
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
@@ -18,13 +18,23 @@ class FacialMaskExtractor:
             refine_landmarks=True,
             min_detection_confidence=0.5
         )
+        self.dilated = dilated
         
-        # Face mesh landmark indices for face outline (excluding forehead for tighter mask)
-        self.FACE_OVAL = [
-            10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
-            397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
-            172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109
-        ]
+        if dilated:
+            self.FACE_OVAL = [
+                10, 151, 337, 299, 333, 298, 301, 368, 264, 447, 366, 401,
+                172, 136, 150, 149, 176, 148, 152, 377, 400, 378, 379, 365,
+                397, 288, 361, 323, 454, 356, 389, 251, 284, 332, 297, 338,
+                18, 200, 199, 175,
+                234, 127, 162, 21, 54, 103, 67, 109,
+                172, 58, 132, 93
+            ]
+        else:
+            self.FACE_OVAL = [
+                10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
+                397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
+                172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109
+            ]
     
     def extract_mask(self, image):
         # Convert BGR to RGB for MediaPipe
@@ -49,12 +59,23 @@ class FacialMaskExtractor:
         # Create mask using convex hull
         face_points = np.array(face_points, dtype=np.int32)
         mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.fillPoly(mask, [face_points], 255)
+        
+        if self.dilated:
+            hull = cv2.convexHull(face_points)
+            cv2.fillPoly(mask, [hull], 255)
+        else:
+            cv2.fillPoly(mask, [face_points], 255)
         
         # Apply morphological operations to smooth the mask
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        
+        if self.dilated:
+            dilation_kernel = np.ones((35, 35), np.uint8)
+            mask = cv2.dilate(mask, dilation_kernel, iterations=1)
+            mask = cv2.GaussianBlur(mask, (21, 21), 0)
+            _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         
         return mask
     
@@ -119,7 +140,7 @@ def process_single_image(extractor,image_path, output_path, debug=False):
         return False, str(e)
 
 
-def process_images_recursive(input_dir, output_dir, preserve_structure=True, debug=False):
+def process_images_recursive(input_dir, output_dir, preserve_structure=True, debug=False, dilated=False):
     """
     Process all images in input_dir and save facial masks to output_dir.
     """
@@ -138,7 +159,7 @@ def process_images_recursive(input_dir, output_dir, preserve_structure=True, deb
         print(f"No images found in {input_dir}")
         return
     
-    extractor = FacialMaskExtractor()
+    extractor = FacialMaskExtractor(dilated=dilated)
     
     processed_count = 0
     error_count = 0
@@ -218,6 +239,11 @@ def main():
         action="store_true",
         help="Save overlay visualization images showing the mask on the original image (for validation)"
     )
+    parser.add_argument(
+        "--dilated",
+        action="store_true",
+        help="Use expanded/dilated facial mask with wider coverage"
+    )
     
     args = parser.parse_args()
     
@@ -229,7 +255,7 @@ def main():
         if args.output_path is None:
             parser.error("--output_path is required when using --image_path")
         
-        extractor = FacialMaskExtractor()
+        extractor = FacialMaskExtractor(dilated=args.dilated)
         success, error_msg = process_single_image(
             extractor,
             args.image_path,
@@ -255,7 +281,8 @@ def main():
             args.input_dir,
             args.output_dir,
             preserve_structure=not args.flatten,
-            debug=args.debug
+            debug=args.debug,
+            dilated=args.dilated
         )
     
     else:
