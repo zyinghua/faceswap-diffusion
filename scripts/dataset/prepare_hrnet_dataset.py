@@ -261,7 +261,7 @@ def process_images_recursive(input_dir, output_dir,
                     "file_name": rel_img_str,
                     "text": current_caption,
                     "conditioning_image": rel_cond_str,
-                    "faceid_embedding": rel_embed_str
+                    "faceid_embedding": rel_embed_str,
                     "source_faceid_embedding": source_embed_str,
                     "source_text": source_generic_caption
                 }
