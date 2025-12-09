@@ -25,7 +25,8 @@ from scripts.models.iresnet import iresnet100
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
-cache_dir = "/root/autodl-tmp"
+#cache_dir = "/root/autodl-tmp"
+cache_dir = "/oscar/scratch/erluo/model_cache"
 
 qwen_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
     model_name,
