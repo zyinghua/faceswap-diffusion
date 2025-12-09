@@ -44,7 +44,7 @@ class ImageFolderDataset(Dataset):
                     if any(name.lower().endswith(ext) for ext in image_extensions):
                         self.image_files.append(name)
         else:
-            # Load from directory
+            # Load from directory (Recursive walk to find subfolders like Part1, Part2)
             image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
             for root, dirs, files in os.walk(path):
                 for file in files:
@@ -111,8 +111,6 @@ def calculate_inception_stats(
         torch.distributed.barrier()
 
     # Load Inception-v3 model.
-    # This is a direct PyTorch translation of http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz
-    # Note: MPS doesn't support all operations used by Inception (e.g., border padding), so use CPU
     model_device = torch.device('cpu') if device.type == 'mps' else device
     if device.type == 'mps':
         dist.print0('Note: Using CPU for Inception model (MPS has limited support for some operations)')
@@ -139,7 +137,7 @@ def calculate_inception_stats(
     num_batches = ((len(dataset_obj) - 1) // (max_batch_size * dist.get_world_size()) + 1) * dist.get_world_size()
     all_batches = torch.arange(len(dataset_obj)).tensor_split(num_batches)
     rank_batches = all_batches[dist.get_rank() :: dist.get_world_size()]
-    # prefetch_factor can only be used when num_workers > 0
+    
     loader_kwargs = {'batch_sampler': rank_batches, 'num_workers': num_workers}
     if num_workers > 0:
         loader_kwargs['prefetch_factor'] = prefetch_factor
@@ -152,7 +150,6 @@ def calculate_inception_stats(
     accum_dtype = torch.float64 if use_float64 else torch.float32
     compute_dtype = torch.float32 if device.type == 'mps' else torch.float64
     
-    # Accumulation tensors on CPU for precision (or on device if CUDA)
     accum_device = torch.device('cpu') if device.type == 'mps' else device
     mu = torch.zeros([feature_dim], dtype=torch.float64, device=accum_device)
     sigma = torch.zeros([feature_dim, feature_dim], dtype=torch.float64, device=accum_device)
@@ -163,9 +160,9 @@ def calculate_inception_stats(
             continue
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
-        # Run inference on model_device (CPU for MPS, device for CUDA)
+        
+        # Run inference
         features = detector_net(images.to(model_device), **detector_kwargs).to(compute_dtype)
-        # Convert to float64 and accumulate on CPU (for MPS) or device (for CUDA)
         features_accum = features.to(torch.float64).to(accum_device)
         mu += features_accum.sum(0)
         sigma += features_accum.T @ features_accum
@@ -190,24 +187,7 @@ def calculate_fid_from_inception_stats(mu, sigma, mu_ref, sigma_ref):
 
 @click.group()
 def main():
-    """Calculate Frechet Inception Distance (FID).
-
-    Examples:
-
-    \b
-    # Generate 50000 images and save them as fid-tmp/*/*.png
-    torchrun --standalone --nproc_per_node=1 generate.py --outdir=fid-tmp --seeds=0-49999 --subdirs \\
-        --network=https://nvlabs-fi-cdn.nvidia.com/edm/pretrained/edm-cifar10-32x32-cond-vp.pkl
-
-    \b
-    # Calculate FID
-    torchrun --standalone --nproc_per_node=1 fid.py calc --images=fid-tmp \\
-        --ref=https://nvlabs-fi-cdn.nvidia.com/edm/fid-refs/cifar10-32x32.npz
-
-    \b
-    # Compute dataset reference statistics
-    python fid.py ref --data=datasets/my-dataset.zip --dest=fid-refs/my-dataset.npz
-    """
+    """Calculate Frechet Inception Distance (FID)."""
 
 #----------------------------------------------------------------------------
 
@@ -224,19 +204,28 @@ def calc(image_path, ref_path, num_expected, seed, batch):
     dist.init()
 
     device = get_device()
-    dist.print0(f'Using device: {device}')
+    if dist.get_rank() == 0:
+        print(f'Using device: {device}')
 
     dist.print0(f'Loading dataset reference statistics from "{ref_path}"...')
     ref = None
     if dist.get_rank() == 0:
-        with dnnlib.util.open_url(ref_path) as f:
-            ref = dict(np.load(f))
+        # --- FIX: Handle local file paths ---
+        if dnnlib.util.is_url(ref_path):
+            with dnnlib.util.open_url(ref_path) as f:
+                ref = dict(np.load(f))
+        else:
+            if not os.path.exists(ref_path):
+                raise FileNotFoundError(f"Reference file not found: {ref_path}")
+            with open(ref_path, 'rb') as f:
+                ref = dict(np.load(f))
+        # ------------------------------------
 
     mu, sigma = calculate_inception_stats(image_path=image_path, num_expected=num_expected, seed=seed, max_batch_size=batch, device=device)
     dist.print0('Calculating FID...')
     if dist.get_rank() == 0:
         fid = calculate_fid_from_inception_stats(mu, sigma, ref['mu'], ref['sigma'])
-        print(f'{fid:g}')
+        print(f'FID: {fid:.4f}')
     torch.distributed.barrier()
 
 #----------------------------------------------------------------------------
@@ -252,7 +241,8 @@ def ref(dataset_path, dest_path, batch):
     dist.init()
 
     device = get_device()
-    dist.print0(f'Using device: {device}')
+    if dist.get_rank() == 0:
+        print(f'Using device: {device}')
 
     mu, sigma = calculate_inception_stats(image_path=dataset_path, max_batch_size=batch, device=device)
     dist.print0(f'Saving dataset reference statistics to "{dest_path}"...')
@@ -268,5 +258,3 @@ def ref(dataset_path, dest_path, batch):
 
 if __name__ == "__main__":
     main()
-
-#----------------------------------------------------------------------------

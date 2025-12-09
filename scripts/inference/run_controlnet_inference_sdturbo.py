@@ -10,11 +10,11 @@ import torch
 import json
 
 BASE_MODEL = "stabilityai/sd-turbo"
-CONTROLNET_PATH = "/users/erluo/scratch/faceswap-diffusion/checkpoints/comparison/landmark-controlnet/checkpoint-25000/controlnet" # pretrained controlnet path, ends with /controlnet
+CONTROLNET_PATH = "/oscar/scratch/erluo/controlnet-model/checkpoint-10000/controlnet" # pretrained controlnet path, ends with /controlnet
 METADATA_JSONL_PATH = ""  # Path to JSONL file containing prompts (each line should have "text")
-CONTROL_IMAGE = "/users/erluo/scratch/faceswap-diffusion/scripts/evaluation/eval_images/img3/69051_landmark.png" # canny image
-NUM_INFERENCE_STEPS = 2
-OUTPUT_PATH = "/users/erluo/scratch/faceswap-diffusion/assets/landmark_control/" # path to output dir
+CONTROL_IMAGE = "/users/erluo/scratch/canny_dataset/canny/Part1/00087.png" # canny image
+NUM_INFERENCE_STEPS = 1
+OUTPUT_PATH = "/oscar/scratch/erluo/turbo_inference/" # path to output dir
 SEED = None
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 DTYPE = torch.bfloat16
@@ -22,7 +22,7 @@ NEGATIVE_PROMPT = "faded, noisy, blurry, low contrast, watermark, painting, draw
 SAMPLE_NUM = 10
 
 # Guidance parameter (default: 7.5):
-GUIDANCE_SCALE = 0.5
+GUIDANCE_SCALE = 0.0
 # controlnet_conditioning_scale: Controls how strongly the model follows the CONTROL IMAGE (default: 1.0) 
 # - Empirical finding: do not change from 1.0.
 CONTROLNET_CONDITIONING_SCALE = 1.0
@@ -31,7 +31,7 @@ CONTROLNET_CONDITIONING_SCALE = 1.0
 def main():
     control_image_filename = CONTROL_IMAGE.split("/")[-1]
     
-    prompt = "A close-up photo of a woman with dark hair styled back, wearing a pearl earring, and applying makeup to her eye with a soft smile."
+    prompt = "A close-up photo of a person with light brown hair styled in loose waves, wearing a small earring, and a neutral expression."
     if METADATA_JSONL_PATH:
         with open(METADATA_JSONL_PATH, 'r', encoding='utf-8') as f:
             for line in f:
