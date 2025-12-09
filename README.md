@@ -1,4 +1,4 @@
-# Repo for face swapping based on ControlNet and IP-Adapter
+# Code Repo for DiffReFace: Exploring Adaptation of Small-Scale Pre-trained Diffusion Models for Face Swapping
 
 ## Environment setup:
 Create a conda environment:
