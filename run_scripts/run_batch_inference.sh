@@ -1,4 +1,4 @@
-EVAL_ROOT="/users/erluo/scratch/faceswap-diffusion/evaluation/test_dataset_detailed"
+EVAL_ROOT="/users/erluo/scratch/faceswap-diffusion/evaluation/test_dataset_detailed_reloaded"
 CONTROLNET_PATH="/users/erluo/scratch/faceswap-diffusion/checkpoints/faceswap-model/checkpoint-30000/controlnet"
 IP_ADAPTER_PATH="/users/erluo/scratch/faceswap-diffusion/checkpoints/faceswap-model/checkpoint-30000/ip_adapter/ip_adapter.bin"
 FACEID_ENC_PATH="checkpoints/glint360k_r100.pth"

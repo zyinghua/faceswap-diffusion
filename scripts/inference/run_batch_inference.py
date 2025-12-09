@@ -36,11 +36,32 @@ DTYPE = torch.float16
 
 def redact_gender_terms(prompt):
     if not prompt: return ""
-    targets = ["man", "woman", "girl", "boy"]
+    
+    # Dictionary mapping target words to their neutral replacements
+    replacements = {
+        # Nouns
+        "man": "person",
+        "woman": "person",
+        "girl": "person",
+        "boy": "person",
+        "guy": "person",
+        "lady": "person",
+        
+        # Pronouns
+        "he": "they",
+        "she": "they",
+        "him": "them",
+        "his": "their",
+        "her": "their", # Assumes possessive use (common in prompts like 'her face')
+        "hers": "theirs"
+    }
+    
     redacted_prompt = prompt
-    for target in targets:
+    for target, replacement in replacements.items():
+        # \b ensures we match whole words only (e.g., avoids changing "hero" to "theiro")
         pattern = re.compile(rf"\b{target}\b", re.IGNORECASE)
-        redacted_prompt = pattern.sub("person", redacted_prompt)
+        redacted_prompt = pattern.sub(replacement, redacted_prompt)
+        
     return redacted_prompt
 
 def save_visual_comparison(save_path, src_img_path, tgt_pil, landmarks_pil, result_pil, prompt):
@@ -152,7 +173,6 @@ def run_batch(args):
             images = pipe(
                 prompt=final_prompt,
                 negative_prompt="noisy, blurry, low contrast, watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured",
-                image=None, 
                 control_image=control_image,
                 # NOTE: We pass the tensor directly now, NO .unsqueeze(0) here
                 faceid_embeddings=faceid_embed, 
