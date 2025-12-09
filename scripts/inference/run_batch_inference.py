@@ -151,7 +151,7 @@ def run_batch(args):
             # --- D. Inference ---
             images = pipe(
                 prompt=final_prompt,
-                negative_prompt="noisy, blurry, low contrast, watermark, painting, deformed, ugly",
+                negative_prompt="noisy, blurry, low contrast, watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured",
                 image=None, 
                 control_image=control_image,
                 # NOTE: We pass the tensor directly now, NO .unsqueeze(0) here
@@ -159,7 +159,7 @@ def run_batch(args):
                 num_inference_steps=50,
                 guidance_scale=7.5,
                 controlnet_conditioning_scale=1.0,
-                ip_adapter_scale=1.0
+                ip_adapter_scale=None
             ).images
 
             # Save Result
