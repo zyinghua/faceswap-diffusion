@@ -52,10 +52,20 @@ You will need to set up training environment config first, please run `accelerat
 - Please select a choice using the arrow or number keys, and selecting with enter: fp16
 ```
 
-There are two training scripts:
-- `train_controlnet.py` for training solely a ControlNet based on your predefined conditions. `train_controlnet.sh` provides exemplar definition of hyper-parameters.
-- `train_controlnet_ip-adapter.py` for training ControlNet + IP-Adapter, similar style as InstantID.
-- `train.py` for training our face swap model.
-
 Please download the `glint360k_r100.pth` for the Face ID encoder from [here](https://cloud.tsinghua.edu.cn/d/962ccd4b243442a3a144/?p=%2Fcheckpoints%2FDiffSwap&mode=list),
-and put into checkpoints/glint360k_r100.pth by default, or specify `--faceid_encoder_path` for the `train.py` script (for face swap).
+and put into `checkpoints/glint360k_r100.pth` by default, or specify `--faceid_encoder_path` for the `train.py` script (for face swap).
+
+Please use `train.py` to train our face swap model. An exemplar usage is at `/run_scripts/train_faceswap.sh`.
+
+We also provide two additional training pipelines for ControlNet-only and ControlNet + IP-Adapter training that we used throughout our experiments, corresponding files are at the `legacy` directory.
+
+
+## Inference
+Please head to `scripts/inference/run_faceswap_inference.py`, and adjust the paths and hyperparameters defined at the top accordingly based on the comments.
+To support the generation of control conditions, we offer a script `scripts/dataset/extract_all_conditions_single_image.py` to extract all conditions for a given face image, including the inference prompt, mask, landmarks and ID embeddings.
+
+## Compute
+Our model is trained and experimented based on two Nvidia RTX 4090 GPUs. We found that training with 4 effective batch size for 35k steps that takes within 5 hours produces reasonable results already.
+
+## Disclaimer
+This project is intended solely for research purposes. We advocate responsible, constructive, ethical and lawful use of face swapping technology. The developers do not assume responsibility for any misuse of the generated outputs. Any unauthorized use of data or creation of harmful content is strictly prohibited and may violate applicable laws and ethical standards.
