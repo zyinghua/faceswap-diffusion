@@ -9,7 +9,7 @@ accelerate launch train.py \
     --train_data_dir "/root/autodl-tmp/ff-celeba-hq-dataset512-idcontrol" \
     --output_dir "/root/autodl-tmp/faceswap-model" \
     --num_train_epochs 1 \
-    --max_train_steps 100000 \
+    --max_train_steps 50000 \
     --resolution 512 \
     --learning_rate 1e-5 \
     --train_batch_size 2 \
