@@ -1,4 +1,4 @@
-# Code Repo for DiffReFace: Exploring Adaptation of Small-Scale Pre-trained Diffusion Models for Face Swapping
+# Codebase for DiffReFace: Exploring Adaptation of Small-Scale Pre-trained Diffusion Models for Face Swapping
 
 ## Environment setup:
 Create a conda environment:
@@ -57,7 +57,7 @@ and put into `checkpoints/glint360k_r100.pth` by default, or specify `--faceid_e
 
 Please use `train.py` to train our face swap model. An exemplar usage is at `/run_scripts/train_faceswap.sh`.
 
-We also provide two additional training pipelines for ControlNet-only and ControlNet + IP-Adapter training that we used throughout our experiments, corresponding files are at the `legacy` directory.
+We also provide two additional training pipelines for ControlNet-only and ControlNet + IP-Adapter training that we used throughout our experiments, corresponding files are in the `legacy` directory.
 
 
 ## Inference
@@ -65,7 +65,7 @@ Please head to `scripts/inference/run_faceswap_inference.py`, and adjust the pat
 To support the generation of control conditions, we offer a script `scripts/dataset/extract_all_conditions_single_image.py` to extract all conditions for a given face image, including the inference prompt, mask, landmarks and ID embeddings.
 
 ## Compute
-Our model is trained and experimented based on two Nvidia RTX 4090 GPUs. We found that training with 4 effective batch size for 35k steps that takes within 5 hours produces reasonable results already.
+Our model is trained and experimented based on two Nvidia RTX 4090 GPUs. We found that training with 4 effective batch size for 35k steps that takes within 5 hours produces reasonable results.
 
 ## Disclaimer
 This project is intended solely for research purposes. We advocate responsible, constructive, ethical and lawful use of face swapping technology. The developers do not assume responsibility for any misuse of the generated outputs. Any unauthorized use of data or creation of harmful content is strictly prohibited and may violate applicable laws and ethical standards.
