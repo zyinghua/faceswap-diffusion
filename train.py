@@ -1575,22 +1575,19 @@ def main(args):
                 loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                 
                 # Compute L_id loss (identity preservation loss)
-                try:
-                    pred_x0 = one_step_clean_pixel_extraction(
-                        model_pred_id, noisy_latents, timesteps, noise_scheduler, vae, args.use_fixed_timestep
-                    )
-                    
-                    source_faceid_emb = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
-                    loss_id = compute_id_loss(
-                        pred_x0=pred_x0.float(),
-                        source_faceid_embeddings=source_faceid_emb,
-                        faceid_encoder=faceid_encoder,
-                        device=accelerator.device
-                    )
+                pred_x0 = one_step_clean_pixel_extraction(
+                    model_pred_id, noisy_latents, timesteps, noise_scheduler, vae, args.use_fixed_timestep
+                )
+                
+                source_faceid_emb = batch["source_faceid_embeddings"].to(accelerator.device, dtype=weight_dtype)
+                loss_id = compute_id_loss(
+                    pred_x0=pred_x0.float(),
+                    source_faceid_embeddings=source_faceid_emb,
+                    faceid_encoder=faceid_encoder,
+                    device=accelerator.device
+                )
 
-                    loss += args.id_loss_weight * loss_id
-                except Exception as e:
-                    logger.warning(f"Skipping L_id loss computation due to error: {e}")
+                loss += args.id_loss_weight * loss_id
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
