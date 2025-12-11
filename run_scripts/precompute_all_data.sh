@@ -57,10 +57,10 @@ python scripts/dataset/iresnet_embedding_extraction.py \
     --output_dir "$EMBEDDINGS_DIR" \
     --model_path "$FACEID_MODEL_PATH"
 
-# STEP 3: Extract Landmarks & Assemble Dataset (HRNet)
+# STEP 3: Extract Landmarks & Assemble Dataset (FaRL)
 # This combines images, embeddings, and landmarks into the final training format
 echo "--- Step 3: Extracting Landmarks & assembling Final Dataset ---"
-python scripts/dataset/prepare_hrnet_dataset.py \
+python scripts/dataset/prepare_faceswap_dataset.py \
     --input_dir "$INPUT_IMAGE_DIR" \
     --output_dir "$FINAL_DATASET_DIR" \
     --embeddings_dir "$EMBEDDINGS_DIR" \
