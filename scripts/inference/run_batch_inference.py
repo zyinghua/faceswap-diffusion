@@ -23,7 +23,7 @@ from scripts.pipelines.pipeline_faceswap import StableDiffusionIDControlPipeline
 try:
     from scripts.dataset.extract_all_conditions_single_image import (
         load_iresnet_model, extract_embedding, 
-        HRNetLandmarkDetector, draw_landmarks
+        FaRLLandmarkDetector, draw_landmarks
     )
 except ImportError as e:
     print(f"Import Error: {e}")
@@ -105,7 +105,7 @@ def run_batch(args):
     # 2. Load Extractors
     print("--- Loading Extractor Models ---")
     iresnet, iresnet_device = load_iresnet_model(args.faceid_encoder_path)
-    landmark_detector = HRNetLandmarkDetector()
+    landmark_detector = FaRLLandmarkDetector()
     
     # 3. Load Config
     with open(args.config_json, 'r') as f:

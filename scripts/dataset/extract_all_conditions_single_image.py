@@ -102,7 +102,7 @@ class FacialMaskExtractor:
         return mask
 
 
-class HRNetLandmarkDetector:
+class FaRLLandmarkDetector:
     def __init__(self, device='cuda'):
         self.device = device
         self.face_detector = facer.face_detector('retinaface/mobilenet', device=self.device)
@@ -306,8 +306,8 @@ def process_image(image_path, output_dir=None, model_path="glint360k_r100.pth", 
     embed_path = output_dir / f"{image_path.stem}.pt"
     torch.save(embedding, embed_path)
     
-    print(f"Loading HRNet Landmark Detector...")
-    landmark_detector = HRNetLandmarkDetector()
+    print(f"Loading FaRL Landmark Detector...")
+    landmark_detector = FaRLLandmarkDetector()
     landmarks = landmark_detector(pil_image)
     
     if landmarks is None:

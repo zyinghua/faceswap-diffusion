@@ -16,16 +16,16 @@ from pipelines.pipeline_faceswap import StableDiffusionIDControlPipeline
 
 # Configuration
 BASE_MODEL = "Manojb/stable-diffusion-2-1-base"
-CONTROLNET_PATH = "/oscar/scratch/erluo/ipcontrol-model/checkpoint-25000/controlnet"  # Path to trained ControlNet (ends with /controlnet)
-IP_ADAPTER_PATH = "/oscar/scratch/erluo/ipcontrol-model/checkpoint-25000/ip_adapter/ip_adapter.bin"  # Path to IP-Adapter checkpoint (ends with /ip_adapter/ip_adapter.bin)
-FACEID_EMBEDDING_PATH = "/users/erluo/scratch/faceswap-diffusion/scripts/evaluation/eval_images/taylor/taylor.pt"  # Path to FaceID embedding .pt file (source ID face to swap in)
-CONTROL_IMAGE = "/users/erluo/scratch/faceswap-diffusion/assets/swapped-results/taylor-20021/20021_landmarks.png"  # control image (e.g., canny edges, landmarks, etc.)
-MASK_IMAGE = "/users/erluo/scratch/faceswap-diffusion/assets/swapped-results/taylor-20021/20021_mask.png"  # Optional: Path to mask image for inpainting
-IMAGE = "/users/erluo/scratch/faceswap-diffusion/assets/swapped-results/taylor-20021/20021.png"  # Optional: Path to target image for inpainting (required when MASK_IMAGE is provided)
+CONTROLNET_PATH = "/users/erluo/scratch/faceswap-diffusion/checkpoints/faceswap-model/checkpoint-30000/controlnet"  # Path to trained ControlNet (ends with /controlnet)
+IP_ADAPTER_PATH = "/users/erluo/scratch/faceswap-diffusion/checkpoints/faceswap-model/checkpoint-30000/ip_adapter/ip_adapter.bin"  # Path to IP-Adapter checkpoint (ends with /ip_adapter/ip_adapter.bin)
+FACEID_EMBEDDING_PATH = "/users/erluo/scratch/faceswap-diffusion/evaluation_imgs/eval_images/67950/67950.pt"  # Path to FaceID embedding .pt file (source ID face to swap in)
+CONTROL_IMAGE = "/users/erluo/scratch/faceswap-diffusion/evaluation_imgs/eval_images/00691/00691_landmark.png"  # control image (e.g., canny edges, landmarks, etc.)
+MASK_IMAGE = "/users/erluo/scratch/faceswap-diffusion/evaluation_imgs/eval_images/00691/00691_mask.png"  # Optional: Path to mask image for inpainting
+IMAGE = "/users/erluo/scratch/faceswap-diffusion/ffhq-dataset512/Part1/00691.png"  # Optional: Path to target image for inpainting (required when MASK_IMAGE is provided)
 METADATA_JSONL_PATH = ""  # Optional: Path to JSONL file containing prompts (each line should have "text" and "file_name")
-PROMPT = "A close-up photo of a middle-aged person with curly red hair, wearing a red top and a microphone, looking slightly to the side with a neutral expression."  # Text prompt for generation (Override text in metadata if provided)
+PROMPT = "A close-up photo of a young person with short brown hair, light skin, and freckles, wearing a yellow shirt and a chain necklace, with a neutral expression."  # Text prompt for generation (Override text in metadata if provided)
 NUM_INFERENCE_STEPS = 50
-OUTPUT_PATH = "/users/erluo/scratch/faceswap-diffusion/evaluation/qual_eval_dream"  # Path to output dir
+OUTPUT_PATH = "/users/erluo/scratch/faceswap-diffusion/evaluation_imgs/qual_eval_dream"  # Path to output dir
 SEED = None
 DTYPE = torch.float16
 NEGATIVE_PROMPT = "noisy, blurry, low contrast, watermark, painting, drawing, illustration, glitch, deformed, mutated, cross-eyed, ugly, disfigured"

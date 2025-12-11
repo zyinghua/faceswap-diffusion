@@ -14,12 +14,12 @@ from PIL import Image
 from tqdm import tqdm
 
 # ==========================================
-# 1. Landmark Detector (HRNet)
+# 1. Landmark Detector (FaRL)
 # ==========================================
-class HRNetLandmarkDetector:
+class FaRLLandmarkDetector:
     def __init__(self, device='cuda'):
         self.device = device
-        print(f"Loading HRNet Landmark Detector on {device}...")
+        print(f"Loading FaRL Landmark Detector on {device}...")
         self.face_detector = facer.face_detector('retinaface/mobilenet', device=self.device)
         self.landmark_detector = facer.face_aligner('farl/wflw/448', device=self.device)
 
@@ -132,7 +132,7 @@ def process_images_recursive(input_dir, output_dir,
     # 1. Initialize Landmark Detector (only if we need to generate landmarks)
     landmark_detector = None
     if not use_existing_landmarks:
-        landmark_detector = HRNetLandmarkDetector()
+        landmark_detector = FaRLLandmarkDetector()
     else:
         print(f"Found existing landmarks directory at {input_landmarks_path}, will use existing landmark images.")
     
@@ -190,7 +190,7 @@ def process_images_recursive(input_dir, output_dir,
             if not embed_output.exists():
                 shutil.copy2(input_embed_file, embed_output)
 
-            # --- C. Generate Landmarks (HRNet) ---
+            # --- C. Generate Landmarks (FaRL) ---
             # Only run if not exists to save time
             if not landmark_output.exists():
                 if use_existing_landmarks:
@@ -202,7 +202,7 @@ def process_images_recursive(input_dir, output_dir,
                         print(f"Warning: Expected landmark not found at {input_landmark_file}, skipping...")
                         continue
                 else:
-                    # Generate landmarks using HRNet
+                    # Generate landmarks using FaRL
                     image = Image.open(img_file).convert("RGB")
                     landmarks = landmark_detector(image)
                     
